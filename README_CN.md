@@ -239,7 +239,7 @@ with open("report.pdf", "rb") as f:
 
 ```bash
 # 复制到 OpenClaw skills 目录
-cp -r skills/mail-mcp ~/.openclaw/skills/
+cp -r skills/mail-skill ~/.openclaw/skills/
 ```
 
 ### Skill 功能
@@ -248,7 +248,7 @@ cp -r skills/mail-mcp ~/.openclaw/skills/
 - 提供常见邮箱配置示例
 - mcporter 使用示例
 
-详见 [skills/mail-mcp/SKILL.md](skills/mail-mcp/SKILL.md)
+详见 [skills/mail-skill/SKILL.md](skills/mail-skill/SKILL.md)
 
 ## 测试
 
@@ -297,7 +297,7 @@ mail-mcp-server/
 │       ├── test_smtp.py        # SMTP 单元测试
 │       └── ...
 ├── skills/
-│   └── mail-mcp/
+│   └── mail-skill/
 │       ├── SKILL.md            # Skill 文档
 │       └── install.sh          # 安装脚本
 ├── specs/
