@@ -379,6 +379,25 @@ Get current date and time.
 }
 ```
 
+## Skills
+
+项目包含一个 OpenClaw skill，帮助用户更好地使用邮件服务。
+
+### 安装 Skill
+
+```bash
+# 复制到 OpenClaw skills 目录
+cp -r skills/mail-mcp ~/.openclaw/skills/
+```
+
+### Skill 功能
+
+- 自动检查 mail-mcp 是否已安装
+- 提供常见邮箱配置示例
+- mcporter 使用示例
+
+详见 [skills/mail-mcp/SKILL.md](skills/mail-mcp/SKILL.md)
+
 ## Testing
 
 ```bash
