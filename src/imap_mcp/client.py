@@ -156,39 +156,50 @@ class IMAPClient:
         if not ids:
             return []
 
-        # Batch fetch for better performance (N+1 fix)
+        # Batch fetch for better performance - 使用 HEADER.FIELDS 获取需要的字段
         ids_str = b",".join(ids)
-        status, fetch_data = conn.fetch(ids_str, "(UID FLAGS ENVELOPE)")
+        # 使用 BODY.PEEK[HEADER.FIELDS ...] 批量获取邮件头
+        status, fetch_data = conn.fetch(ids_str, "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE)])")
         
         result = []
         if status in IMAP_OK and fetch_data:
-            # Parse batched response - each message comes as separate items
-            current_msg_id = None
+            # IMAP 批量 fetch 响应格式：
+            # 每封邮件返回 2 条数据：
+            # 1. tuple: (b'6911 (UID 9859 FLAGS (\Seen) BODY[...] {size}', b'邮件头数据')
+            # 2. bytes: b')' 结束符
             for item in fetch_data:
-                if isinstance(item, tuple):
-                    # Parse the response format: b'1 (UID 100 FLAGS (\Seen) ENVELOPE (...))'
-                    header = item[0] if isinstance(item[0], bytes) else item[0].encode()
-                    # Extract message ID from header
-                    match = re.match(rb'(\d+)\s+\(', header)
-                    if match:
-                        current_msg_id = match.group(1).decode()
-                    
-                    envelope_data = item[1]
-                    if envelope_data:
-                        try:
-                            msg = email.message_from_bytes(envelope_data, policy=default)
-                            msg_id_str = current_msg_id or ""
+                if isinstance(item, tuple) and len(item) >= 2:
+                    try:
+                        # 解析邮件头行: b'6911 (UID 9859 FLAGS (\Seen) BODY[...] {size}'
+                        header_line = item[0].decode('utf-8', errors='replace')
+                        
+                        # 提取消息 ID
+                        msg_id_match = re.match(r'(\d+)\s+\(', header_line)
+                        msg_id = msg_id_match.group(1) if msg_id_match else ""
+                        
+                        # 提取 UID
+                        uid_match = re.search(r'UID\s+(\d+)', header_line)
+                        uid = uid_match.group(1) if uid_match else ""
+                        
+                        # 提取 FLAGS
+                        flags_match = re.search(r'FLAGS\s*\(([^)]*)\)', header_line)
+                        flags = flags_match.group(1).split() if flags_match else []
+                        
+                        # 解析邮件头数据
+                        header_data = item[1]
+                        if header_data:
+                            header_msg = email.message_from_bytes(header_data, policy=default)
                             result.append({
-                                "id": msg_id_str,
-                                "uid": self._extract_uid_from_header(header),
-                                "subject": msg.get("Subject", ""),
-                                "from": msg.get("From", ""),
-                                "to": msg.get("To", ""),
-                                "date": msg.get("Date", ""),
-                                "flags": self._extract_flags_from_header(header),
+                                "id": msg_id,
+                                "uid": uid,
+                                "flags": flags,
+                                "subject": header_msg.get("Subject", ""),
+                                "from": header_msg.get("From", ""),
+                                "to": header_msg.get("To", ""),
+                                "date": header_msg.get("Date", ""),
                             })
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
 
         return result
 
