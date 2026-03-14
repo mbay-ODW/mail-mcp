@@ -4,6 +4,9 @@ IMAP MCP Server.
 A Python library for IMAP email operations with MCP (Model Context Protocol) support.
 """
 
+from imap_mcp.config import IMAPConfig
+from imap_mcp.client import IMAPClient, get_imap_client, reset_imap_client, IMAP_OK
+
 from imap_mcp.core import (
     ConnectionConfig,
     IMAPConnection,
@@ -77,6 +80,13 @@ EmailMoveError = IMAPEmailMoveFailed
 __version__ = '0.1.0'
 
 __all__ = [
+    # Config and Client (new)
+    'IMAPConfig',
+    'IMAPClient',
+    'get_imap_client',
+    'reset_imap_client',
+    'IMAP_OK',
+    
     # Core
     'ConnectionConfig',
     'IMAPConnection',

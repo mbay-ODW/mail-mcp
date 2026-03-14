@@ -1,0 +1,633 @@
+"""MCP Tools definitions and handlers for IMAP operations."""
+
+import base64
+from typing import List
+
+from mcp.types import Tool, TextContent
+
+from ..client import get_imap_client
+from ..smtp import Attachment, get_smtp_client
+from ..smtp.operations import send_email, send_reply, send_forward
+
+
+def get_imap_tools() -> List[Tool]:
+    """Get all IMAP-related tool definitions."""
+    return [
+        Tool(
+            name="list_folders",
+            description="List all email folders",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        Tool(
+            name="create_folder",
+            description="Create a new email folder",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder_name": {
+                        "type": "string",
+                        "description": "Name of the folder to create",
+                    },
+                },
+                "required": ["folder_name"],
+            },
+        ),
+        Tool(
+            name="delete_folder",
+            description="Delete an email folder",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder_name": {
+                        "type": "string",
+                        "description": "Name of the folder to delete",
+                    },
+                },
+                "required": ["folder_name"],
+            },
+        ),
+        Tool(
+            name="rename_folder",
+            description="Rename an email folder",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "old_name": {
+                        "type": "string",
+                        "description": "Current folder name",
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": "New folder name",
+                    },
+                },
+                "required": ["old_name", "new_name"],
+            },
+        ),
+        Tool(
+            name="search_emails",
+            description="Search emails with criteria",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder to search in (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "criteria": {
+                        "type": "string",
+                        "description": "IMAP search criteria (e.g., 'ALL', 'UNSEEN', 'FROM sender@example.com', 'SUBJECT urgent')",
+                        "default": "ALL",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default: 10)",
+                        "default": 10,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_email",
+            description="Get detailed email information",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder containing the email (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "description": "Message ID (sequence number)",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Unique ID of the message",
+                    },
+                    "include_body": {
+                        "type": "boolean",
+                        "description": "Include email body (default: true)",
+                        "default": True,
+                    },
+                },
+                "anyOf": [
+                    {"required": ["message_id"]},
+                    {"required": ["uid"]},
+                ],
+            },
+        ),
+        Tool(
+            name="mark_read",
+            description="Mark email as read (seen)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder containing the email (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "description": "Message ID (sequence number)",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Unique ID of the message",
+                    },
+                },
+                "anyOf": [
+                    {"required": ["message_id"]},
+                    {"required": ["uid"]},
+                ],
+            },
+        ),
+        Tool(
+            name="mark_unread",
+            description="Mark email as unread (remove seen flag)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder containing the email (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "description": "Message ID (sequence number)",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Unique ID of the message",
+                    },
+                },
+                "anyOf": [
+                    {"required": ["message_id"]},
+                    {"required": ["uid"]},
+                ],
+            },
+        ),
+        Tool(
+            name="mark_flagged",
+            description="Mark email as flagged (starred)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder containing the email (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "description": "Message ID (sequence number)",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Unique ID of the message",
+                    },
+                },
+                "anyOf": [
+                    {"required": ["message_id"]},
+                    {"required": ["uid"]},
+                ],
+            },
+        ),
+        Tool(
+            name="unmark_flagged",
+            description="Unmark email as flagged (remove starred)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder containing the email (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "description": "Message ID (sequence number)",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Unique ID of the message",
+                    },
+                },
+                "anyOf": [
+                    {"required": ["message_id"]},
+                    {"required": ["uid"]},
+                ],
+            },
+        ),
+        Tool(
+            name="move_email",
+            description="Move email to another folder",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_folder": {
+                        "type": "string",
+                        "description": "Source folder name",
+                    },
+                    "target_folder": {
+                        "type": "string",
+                        "description": "Target folder name",
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "description": "Message ID (sequence number)",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Unique ID of the message",
+                    },
+                },
+                "required": ["source_folder", "target_folder"],
+                "anyOf": [
+                    {"required": ["message_id"]},
+                    {"required": ["uid"]},
+                ],
+            },
+        ),
+        Tool(
+            name="copy_email",
+            description="Copy email to another folder",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_folder": {
+                        "type": "string",
+                        "description": "Source folder name",
+                    },
+                    "target_folder": {
+                        "type": "string",
+                        "description": "Target folder name",
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "description": "Message ID (sequence number)",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Unique ID of the message",
+                    },
+                },
+                "required": ["source_folder", "target_folder"],
+                "anyOf": [
+                    {"required": ["message_id"]},
+                    {"required": ["uid"]},
+                ],
+            },
+        ),
+        Tool(
+            name="delete_email",
+            description="Delete email (mark as deleted and expunge)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder containing the email (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "message_id": {
+                        "type": "string",
+                        "description": "Message ID (sequence number)",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Unique ID of the message",
+                    },
+                },
+                "anyOf": [
+                    {"required": ["message_id"]},
+                    {"required": ["uid"]},
+                ],
+            },
+        ),
+        Tool(
+            name="get_current_date",
+            description="Get current date and time",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+    ]
+
+
+def get_smtp_tools() -> List[Tool]:
+    """Get all SMTP-related tool definitions."""
+    return [
+        Tool(
+            name="send_email",
+            description="Send an email with optional HTML body and attachments",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of recipient email addresses",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Email subject",
+                    },
+                    "body_text": {
+                        "type": "string",
+                        "description": "Plain text body",
+                    },
+                    "body_html": {
+                        "type": "string",
+                        "description": "HTML body",
+                    },
+                    "cc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "CC recipients",
+                    },
+                    "bcc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "BCC recipients",
+                    },
+                    "attachments": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "filename": {"type": "string"},
+                                "content_type": {"type": "string"},
+                                "data_base64": {"type": "string"},
+                            },
+                        },
+                        "description": "Attachments (base64 encoded)",
+                    },
+                },
+                "required": ["to", "subject"],
+            },
+        ),
+        Tool(
+            name="send_reply",
+            description="Reply to an email",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Recipient email addresses",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Reply subject (usually with Re:)",
+                    },
+                    "body_text": {
+                        "type": "string",
+                        "description": "Reply body text",
+                    },
+                    "body_html": {
+                        "type": "string",
+                        "description": "Reply body HTML",
+                    },
+                    "reply_to_message_id": {
+                        "type": "string",
+                        "description": "Original message ID to reply to",
+                    },
+                    "quote_original": {
+                        "type": "boolean",
+                        "description": "Quote original message (default: true)",
+                        "default": True,
+                    },
+                },
+                "required": ["to", "subject", "reply_to_message_id"],
+            },
+        ),
+        Tool(
+            name="send_forward",
+            description="Forward an email to another recipient",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Forward recipient addresses",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Forward subject (usually with Fwd:)",
+                    },
+                    "original_folder": {
+                        "type": "string",
+                        "description": "Folder of original email (optional, if fetching original)",
+                    },
+                    "original_message_id": {
+                        "type": "string",
+                        "description": "Message ID of email to forward (optional, if fetching original)",
+                    },
+                    "body_text": {
+                        "type": "string",
+                        "description": "Additional comment for forward",
+                    },
+                    "body_html": {
+                        "type": "string",
+                        "description": "Additional HTML comment for forward",
+                    },
+                },
+                "required": ["to", "subject"],
+            },
+        ),
+    ]
+
+
+def get_all_tools() -> List[Tool]:
+    """Get all tool definitions."""
+    return get_imap_tools() + get_smtp_tools()
+
+
+async def handle_imap_tool(name: str, arguments: dict) -> List[TextContent]:
+    """Handle IMAP tool calls."""
+    client = get_imap_client()
+
+    if name == "list_folders":
+        result = client.list_folders()
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "create_folder":
+        result = client.create_folder(arguments["folder_name"])
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "delete_folder":
+        result = client.delete_folder(arguments["folder_name"])
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "rename_folder":
+        result = client.rename_folder(arguments["old_name"], arguments["new_name"])
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "search_emails":
+        result = client.search_emails(
+            folder=arguments.get("folder", "INBOX"),
+            criteria=arguments.get("criteria", "ALL"),
+            limit=arguments.get("limit", 10),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "get_email":
+        result = client.get_email(
+            folder=arguments.get("folder", "INBOX"),
+            message_id=arguments.get("message_id"),
+            uid=arguments.get("uid"),
+            include_body=arguments.get("include_body", True),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "mark_read":
+        result = client.mark_read(
+            folder=arguments.get("folder", "INBOX"),
+            message_id=arguments.get("message_id"),
+            uid=arguments.get("uid"),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "mark_unread":
+        result = client.mark_unread(
+            folder=arguments.get("folder", "INBOX"),
+            message_id=arguments.get("message_id"),
+            uid=arguments.get("uid"),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "mark_flagged":
+        result = client.mark_flagged(
+            folder=arguments.get("folder", "INBOX"),
+            message_id=arguments.get("message_id"),
+            uid=arguments.get("uid"),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "unmark_flagged":
+        result = client.unmark_flagged(
+            folder=arguments.get("folder", "INBOX"),
+            message_id=arguments.get("message_id"),
+            uid=arguments.get("uid"),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "move_email":
+        result = client.move_email(
+            source_folder=arguments["source_folder"],
+            target_folder=arguments["target_folder"],
+            message_id=arguments.get("message_id"),
+            uid=arguments.get("uid"),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "copy_email":
+        result = client.copy_email(
+            source_folder=arguments["source_folder"],
+            target_folder=arguments["target_folder"],
+            message_id=arguments.get("message_id"),
+            uid=arguments.get("uid"),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "delete_email":
+        result = client.delete_email(
+            folder=arguments.get("folder", "INBOX"),
+            message_id=arguments.get("message_id"),
+            uid=arguments.get("uid"),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "get_current_date":
+        result = client.get_current_date()
+        return [TextContent(type="text", text=str(result))]
+
+    return None  # Not an IMAP tool
+
+
+async def handle_smtp_tool(name: str, arguments: dict) -> List[TextContent]:
+    """Handle SMTP tool calls."""
+    imap_client = get_imap_client()
+    smtp_client = get_smtp_client()
+
+    if name == "send_email":
+        # Parse attachments
+        attachments = []
+        for att in arguments.get("attachments", []):
+            attachments.append(Attachment(
+                filename=att["filename"],
+                content_type=att.get("content_type", "application/octet-stream"),
+                data=base64.b64decode(att["data_base64"]),
+            ))
+
+        result = send_email(
+            client=smtp_client,
+            to=arguments["to"],
+            subject=arguments["subject"],
+            body_text=arguments.get("body_text"),
+            body_html=arguments.get("body_html"),
+            cc=arguments.get("cc"),
+            bcc=arguments.get("bcc"),
+            attachments=attachments if attachments else None,
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "send_reply":
+        result = send_reply(
+            client=smtp_client,
+            to=arguments["to"],
+            subject=arguments["subject"],
+            body_text=arguments.get("body_text"),
+            body_html=arguments.get("body_html"),
+            reply_to_message_id=arguments.get("reply_to_message_id"),
+            quote_original=arguments.get("quote_original", True),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "send_forward":
+        # Optionally fetch original email if folder and message_id provided
+        original_email_data = None
+        folder = arguments.get("original_folder")
+        msg_id = arguments.get("original_message_id")
+
+        if folder and msg_id:
+            try:
+                original_email_data = imap_client.get_email(
+                    folder=folder,
+                    message_id=msg_id,
+                    include_body=True,
+                )
+            except Exception:
+                pass  # Continue without original email data
+
+        result = send_forward(
+            client=smtp_client,
+            to=arguments["to"],
+            subject=arguments["subject"],
+            original_email_data=original_email_data,
+            body_text=arguments.get("body_text"),
+            body_html=arguments.get("body_html"),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    return None  # Not an SMTP tool
+
+
+__all__ = [
+    "get_imap_tools",
+    "get_smtp_tools",
+    "get_all_tools",
+    "handle_imap_tool",
+    "handle_smtp_tool",
+]

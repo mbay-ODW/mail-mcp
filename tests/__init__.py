@@ -1,1 +1,1 @@
-"""Unit tests for imap-mcp-server."""
+"""Test package for IMAP MCP Server."""
