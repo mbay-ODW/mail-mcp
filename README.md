@@ -1,5 +1,7 @@
 # Mail MCP Server
 
+[English](README.md) | [中文](README_CN.md)
+
 Email management via MCP (Model Context Protocol). Provides complete IMAP email operations and SMTP sending capabilities through a standardized MCP interface.
 
 ## Features
