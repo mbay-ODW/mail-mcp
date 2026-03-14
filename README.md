@@ -1,4 +1,4 @@
-# IMAP MCP Server
+# Mail MCP Server
 
 Email management via MCP (Model Context Protocol). Provides complete IMAP email operations and SMTP sending capabilities through a standardized MCP interface.
 

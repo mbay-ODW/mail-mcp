@@ -465,7 +465,7 @@ def reset_imap_client() -> None:
 
 
 # Create MCP Server
-app = Server("imap-mcp-server")
+app = Server("mail-mcp-server")
 
 
 @app.list_tools()
