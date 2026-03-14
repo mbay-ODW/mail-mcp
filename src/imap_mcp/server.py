@@ -23,6 +23,10 @@ from .smtp import SMTPConfig, SMTPClient, Attachment, get_smtp_client, reset_smt
 from .smtp.operations import send_email, send_reply, send_forward
 
 
+# IMAP status constants
+IMAP_OK = (b"OK", "OK")
+
+
 @dataclass
 class IMAPConfig:
     """IMAP configuration from environment variables."""
@@ -89,7 +93,7 @@ class IMAPClient:
 
     def _check_status(self, status: Any, data: Any, context: str) -> None:
         """Check IMAP status and raise on error."""
-        if status != b"OK" and status != "OK":
+        if status not in IMAP_OK:
             raise Exception(f"{context}: {data}")
 
     def list_folders(self) -> List[Dict[str, str]]:
@@ -178,45 +182,59 @@ class IMAPClient:
         ids = message_ids[0].split()
         ids = ids[-limit:] if len(ids) > limit else ids
 
+        if not ids:
+            return []
+
+        # Batch fetch for better performance (N+1 fix)
+        ids_str = b",".join(ids)
+        status, fetch_data = conn.fetch(ids_str, "(UID FLAGS ENVELOPE)")
+        
         result = []
-        for msg_id in ids:
-            status, msg_data = conn.fetch(msg_id, "(UID FLAGS ENVELOPE)")
-            if (status == b"OK" or status == "OK") and msg_data:
-                envelope = msg_data[0]
-                if isinstance(envelope, tuple):
-                    msg = email.message_from_bytes(
-                        envelope[1], policy=default
-                    )
-                    result.append({
-                        "id": msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id),
-                        "uid": self._get_uid(msg_data),
-                        "subject": msg.get("Subject", ""),
-                        "from": msg.get("From", ""),
-                        "to": msg.get("To", ""),
-                        "date": msg.get("Date", ""),
-                        "flags": self._parse_flags(msg_data),
-                    })
+        if status in IMAP_OK and fetch_data:
+            # Parse batched response - each message comes as separate items
+            current_msg_id = None
+            for item in fetch_data:
+                if isinstance(item, tuple):
+                    # Parse the response format: b'1 (UID 100 FLAGS (\Seen) ENVELOPE (...))'
+                    header = item[0] if isinstance(item[0], bytes) else item[0].encode()
+                    # Extract message ID from header
+                    import re
+                    match = re.match(rb'(\d+)\s+\(', header)
+                    if match:
+                        current_msg_id = match.group(1).decode()
+                    
+                    envelope_data = item[1]
+                    if envelope_data:
+                        try:
+                            msg = email.message_from_bytes(envelope_data, policy=default)
+                            msg_id_str = current_msg_id or ""
+                            result.append({
+                                "id": msg_id_str,
+                                "uid": self._extract_uid_from_header(header),
+                                "subject": msg.get("Subject", ""),
+                                "from": msg.get("From", ""),
+                                "to": msg.get("To", ""),
+                                "date": msg.get("Date", ""),
+                                "flags": self._extract_flags_from_header(header),
+                            })
+                        except Exception:
+                            pass
 
         return result
 
-    def _get_uid(self, msg_data: Any) -> Optional[str]:
-        """Extract UID from message data."""
-        for item in msg_data:
-            if isinstance(item, tuple):
-                if b"UID" in item[0]:
-                    return item[1].decode() if isinstance(item[1], bytes) else str(item[1])
-        return None
+    def _extract_uid_from_header(self, header: bytes) -> Optional[str]:
+        """Extract UID from fetch response header."""
+        import re
+        match = re.search(rb'UID\s+(\d+)', header)
+        return match.group(1).decode() if match else None
 
-    def _parse_flags(self, msg_data: Any) -> List[str]:
-        """Parse flags from message data."""
-        for item in msg_data:
-            if isinstance(item, tuple):
-                if b"FLAGS" in item[0]:
-                    flags_bytes = item[1]
-                    if isinstance(flags_bytes, bytes):
-                        flags_str = flags_bytes.decode()
-                        return flags_str.strip("()").split()
-                    return []
+    def _extract_flags_from_header(self, header: bytes) -> List[str]:
+        """Extract flags from fetch response header."""
+        import re
+        match = re.search(rb'FLAGS\s*\(([^)]*)\)', header)
+        if match:
+            flags_str = match.group(1).decode().strip()
+            return flags_str.split() if flags_str else []
         return []
 
     def get_email(

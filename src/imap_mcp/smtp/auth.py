@@ -3,9 +3,6 @@
 提供 SMTP 认证相关的辅助功能。
 """
 import base64
-import hashlib
-import hmac
-import time
 from typing import List, Optional, Tuple
 
 
@@ -40,8 +37,27 @@ def generate_oauth2_string(
     ).decode("ascii")
 
 
-def validate_email_address(email: str) -> Tuple[bool, str]:
+def validate_email_address(email: str) -> bool:
     """验证邮箱地址格式
+
+    Args:
+        email: 邮箱地址
+
+    Returns:
+        True if valid, False otherwise
+    """
+    import re
+
+    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if not email:
+        return False
+    if not re.match(pattern, email):
+        return False
+    return True
+
+
+def validate_email_address_with_error(email: str) -> Tuple[bool, str]:
+    """验证邮箱地址格式，返回详细错误信息
 
     Args:
         email: 邮箱地址
@@ -49,12 +65,9 @@ def validate_email_address(email: str) -> Tuple[bool, str]:
     Returns:
         (是否有效, 错误信息)
     """
-    import re
-
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if not email:
         return False, "邮箱地址不能为空"
-    if not re.match(pattern, email):
+    if not validate_email_address(email):
         return False, "邮箱地址格式无效"
     return True, ""
 
@@ -78,8 +91,7 @@ def parse_recipients(recipients: str) -> Tuple[List[str], List[str]]:
         r = r.strip()
         if not r:
             continue
-        is_valid, _ = validate_email_address(r)
-        if is_valid:
+        if validate_email_address(r):
             valid.append(r)
         else:
             invalid.append(r)

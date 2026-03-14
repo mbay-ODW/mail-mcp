@@ -14,6 +14,7 @@ from .auth import (
     generate_oauth2_string,
     parse_recipients,
     validate_email_address,
+    validate_email_address_with_error,
 )
 from .connection import SMTPClient, SMTPConfig
 from .errors import (
@@ -84,5 +85,6 @@ __all__ = [
     "LoginAuth",
     "generate_oauth2_string",
     "validate_email_address",
+    "validate_email_address_with_error",
     "parse_recipients",
 ]
