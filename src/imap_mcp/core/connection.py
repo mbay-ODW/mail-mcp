@@ -202,42 +202,6 @@ class IMAPConnection:
             raise IMAPNotConnectedError("Not connected to IMAP server")
         return self._connection.lsub(directory, pattern)
 
-    def create(self, mailbox: str):
-        """创建文件夹 (代理到原始连接)"""
-        if self._connection is None:
-            raise IMAPNotConnectedError("Not connected to IMAP server")
-        return self._connection.create(mailbox)
-
-    def delete(self, mailbox: str):
-        """删除文件夹 (代理到原始连接)"""
-        if self._connection is None:
-            raise IMAPNotConnectedError("Not connected to IMAP server")
-        return self._connection.delete(mailbox)
-
-    def rename(self, old_name: str, new_name: str):
-        """重命名文件夹 (代理到原始连接)"""
-        if self._connection is None:
-            raise IMAPNotConnectedError("Not connected to IMAP server")
-        return self._connection.rename(old_name, new_name)
-
-    def subscribe(self, mailbox: str):
-        """订阅文件夹 (代理到原始连接)"""
-        if self._connection is None:
-            raise IMAPNotConnectedError("Not connected to IMAP server")
-        return self._connection.subscribe(mailbox)
-
-    def unsubscribe(self, mailbox: str):
-        """取消订阅文件夹 (代理到原始连接)"""
-        if self._connection is None:
-            raise IMAPNotConnectedError("Not connected to IMAP server")
-        return self._connection.unsubscribe(mailbox)
-
-    def status(self, mailbox: str, status_items: str):
-        """获取文件夹状态 (代理到原始连接)"""
-        if self._connection is None:
-            raise IMAPNotConnectedError("Not connected to IMAP server")
-        return self._connection.status(mailbox, status_items)
-
     def connect(self) -> None:
         """建立 IMAP 连接"""
         config = self.config

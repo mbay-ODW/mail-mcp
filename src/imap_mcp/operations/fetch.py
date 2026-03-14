@@ -141,6 +141,7 @@ class EmailFetch:
             
             # Execute fetch
             response = self._conn.fetch(str(uid), fetch_items)
+            status = response[0]
             
             if status not in ('OK', b'OK') and not isinstance(status, int):
                 error_msg = response[1][0].decode('utf-8', errors='replace') if response[1] else 'Unknown error'

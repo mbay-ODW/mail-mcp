@@ -8,7 +8,7 @@ import os
 import imaplib
 import email
 import base64
-from email.parser import Parser
+import threading
 from email.policy import default
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -443,25 +443,30 @@ class IMAPClient:
         return datetime.now().isoformat()
 
 
-# Global client instance
+# Global client instance with thread-safe lock
 _imap_client: Optional[IMAPClient] = None
+_imap_lock = threading.Lock()
 
 
 def get_imap_client() -> IMAPClient:
-    """Get or create IMAP client instance."""
+    """Get or create IMAP client instance (thread-safe)."""
     global _imap_client
     if _imap_client is None:
-        config = IMAPConfig.from_env()
-        _imap_client = IMAPClient(config)
+        with _imap_lock:
+            # Double-check after acquiring lock
+            if _imap_client is None:
+                config = IMAPConfig.from_env()
+                _imap_client = IMAPClient(config)
     return _imap_client
 
 
 def reset_imap_client() -> None:
-    """Reset IMAP client (for testing)."""
+    """Reset IMAP client (for testing, thread-safe)."""
     global _imap_client
-    if _imap_client:
-        _imap_client.disconnect()
-        _imap_client = None
+    with _imap_lock:
+        if _imap_client:
+            _imap_client.disconnect()
+            _imap_client = None
 
 
 # Create MCP Server

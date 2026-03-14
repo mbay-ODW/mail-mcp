@@ -3,6 +3,7 @@
 提供 SMTP 连接管理和邮件发送功能。
 """
 
+import threading
 from dataclasses import dataclass
 from typing import Optional
 
@@ -38,25 +39,30 @@ class Attachment:
     data: bytes
 
 
-# Global SMTP client instance
+# Global SMTP client instance with thread-safe lock
 _smtp_client: Optional[SMTPClient] = None
+_smtp_lock = threading.Lock()
 
 
 def get_smtp_client() -> SMTPClient:
-    """Get or create SMTP client instance."""
+    """Get or create SMTP client instance (thread-safe)."""
     global _smtp_client
     if _smtp_client is None:
-        config = SMTPConfig.from_env()
-        _smtp_client = SMTPClient(config)
+        with _smtp_lock:
+            # Double-check after acquiring lock
+            if _smtp_client is None:
+                config = SMTPConfig.from_env()
+                _smtp_client = SMTPClient(config)
     return _smtp_client
 
 
 def reset_smtp_client() -> None:
-    """Reset SMTP client (for testing)."""
+    """Reset SMTP client (for testing, thread-safe)."""
     global _smtp_client
-    if _smtp_client:
-        _smtp_client.disconnect()
-        _smtp_client = None
+    with _smtp_lock:
+        if _smtp_client:
+            _smtp_client.disconnect()
+            _smtp_client = None
 
 
 __all__ = [

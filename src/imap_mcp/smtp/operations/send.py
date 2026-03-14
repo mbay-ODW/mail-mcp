@@ -252,7 +252,8 @@ def send_forward(
     client,
     to: List[str],
     subject: Optional[str],
-    original_message: Message,
+    original_message: Optional[Message] = None,
+    original_email_data: Optional[Dict[str, Any]] = None,
     body_text: Optional[str] = None,
     body_html: Optional[str] = None,
     from_addr: Optional[str] = None,
@@ -264,7 +265,8 @@ def send_forward(
         client: SMTP 客户端对象
         to: 转发目标收件人列表
         subject: 主题 (如果为 None 会自动添加 Fwd:)
-        original_message: 原邮件消息
+        original_message: 原邮件消息对象 (Message 类型)
+        original_email_data: 原邮件数据 (dict 类型，从 IMAPClient.get_email 返回)
         body_text: 附言 (纯文本)
         body_html: 附言 (HTML)
         from_addr: 发件人地址
@@ -289,13 +291,44 @@ def send_forward(
             else:
                 return SendResult(success=False, error="缺少发件人地址")
         
-        # 获取原邮件主题
-        original_subject = original_message.get('Subject', '')
+        # 处理 original_email_data (dict 格式)
+        if original_email_data and isinstance(original_email_data, dict):
+            original_subject = original_email_data.get('subject', '')
+            original_from = original_email_data.get('from', 'N/A')
+            original_to = original_email_data.get('to', 'N/A')
+            original_date = original_email_data.get('date', 'N/A')
+            original_body = original_email_data.get('body_text', '') or original_email_data.get('body', '')
+        elif original_message:
+            # 处理 Message 对象
+            original_subject = original_message.get('Subject', '')
+            original_from = original_message.get('From', 'N/A')
+            original_to = original_message.get('To', 'N/A')
+            original_date = original_message.get('Date', 'N/A')
+            # 获取邮件内容
+            original_body = ''
+            if hasattr(original_message, 'walk'):
+                for part in original_message.walk():
+                    if part.get_content_type() == 'text/plain':
+                        try:
+                            original_body = part.get_payload(decode=True).decode('utf-8')
+                        except Exception:
+                            pass
+                        break
+        else:
+            # 没有原邮件数据
+            original_subject = ''
+            original_from = 'N/A'
+            original_to = 'N/A'
+            original_date = 'N/A'
+            original_body = ''
+        
         if subject is None:
-            if not original_subject.startswith('Fwd:'):
+            if original_subject and not original_subject.startswith('Fwd:'):
                 subject = f'Fwd: {original_subject}'
-            else:
+            elif original_subject:
                 subject = original_subject
+            else:
+                subject = 'Fwd: (no subject)'
         
         # 构建转发邮件正文
         forward_text = ""
@@ -304,25 +337,15 @@ def send_forward(
         
         # 添加原邮件信息
         forward_text += "---------- 转发邮件 ----------\n"
-        forward_text += f"From: {original_message.get('From', 'N/A')}\n"
-        forward_text += f"To: {original_message.get('To', 'N/A')}\n"
+        forward_text += f"From: {original_from}\n"
+        forward_text += f"To: {original_to}\n"
         forward_text += f"Subject: {original_subject}\n"
-        forward_text += f"Date: {original_message.get('Date', 'N/A')}\n"
+        forward_text += f"Date: {original_date}\n"
         forward_text += "\n"
         
-        # 获取原邮件内容
-        original_payload = original_message.get_payload()
-        if isinstance(original_payload, str):
-            forward_text += original_payload
-        else:
-            # 多部分邮件，尝试获取纯文本
-            for part in original_message.walk():
-                if part.get_content_type() == 'text/plain':
-                    try:
-                        forward_text += part.get_payload(decode=True).decode('utf-8')
-                    except Exception:
-                        pass
-                    break
+        # 添加原邮件内容
+        if original_body:
+            forward_text += original_body
         
         # 构建邮件
         message = build_email_message(
