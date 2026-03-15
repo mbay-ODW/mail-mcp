@@ -1,4 +1,4 @@
-# imap-mcp-server 测试报告
+# mail-mcp-server 测试报告
 
 **测试时间**: 2026-03-14 15:50
 **测试环境**: 阿里云企业邮箱 (mail.qiye.aliyun.com:993)
@@ -82,7 +82,7 @@
 
 ## 结论
 
-**imap-mcp-server 测试全部通过！**
+**mail-mcp-server 测试全部通过！**
 
 - ✅ 连接管理正常
 - ✅ 文件夹操作正常

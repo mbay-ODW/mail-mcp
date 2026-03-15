@@ -4,10 +4,10 @@ IMAP MCP Server.
 A Python library for IMAP email operations with MCP (Model Context Protocol) support.
 """
 
-from imap_mcp.config import IMAPConfig
-from imap_mcp.client import IMAPClient, get_imap_client, reset_imap_client, IMAP_OK
+from mail_mcp.config import IMAPConfig
+from mail_mcp.client import IMAPClient, get_imap_client, reset_imap_client, IMAP_OK
 
-from imap_mcp.core import (
+from mail_mcp.core import (
     ConnectionConfig,
     IMAPConnection,
     imap_connection,
@@ -47,12 +47,12 @@ from imap_mcp.core import (
     IMAPOperationTimeout,
 )
 
-from imap_mcp.folders import (
+from mail_mcp.folders import (
     FolderManager,
     list_all_folders,
 )
 
-from imap_mcp.operations import (
+from mail_mcp.operations import (
     EmailSearch,
     search_emails,
     EmailFetch,

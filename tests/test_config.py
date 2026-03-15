@@ -4,7 +4,7 @@ import os
 import pytest
 from unittest.mock import patch
 
-from imap_mcp.config import IMAPConfig
+from mail_mcp.config import IMAPConfig
 
 
 class TestIMAPConfig:

@@ -22,7 +22,7 @@ Email management via MCP (Model Context Protocol). Provides complete IMAP email 
 
 ```bash
 # Clone and install
-cd imap-mcp-server
+cd mail-mcp-server
 pip install -e .
 
 # Or install directly
@@ -83,14 +83,14 @@ export SMTP_SSL=true
 
 ```bash
 # Run as stdio MCP server
-python -m imap_mcp.server
+python -m mail_mcp.server
 ```
 
 ### With npx (npm)
 
 ```bash
 # Install and run
-npx imap-mcp-server
+npx mail-mcp-server
 ```
 
 ## MCP Tools
@@ -424,9 +424,9 @@ pytest tests/integration/test_smtp_server.py -v
 ## Project Structure
 
 ```
-imap-mcp-server/
+mail-mcp-server/
 ├── src/
-│   └── imap_mcp/
+│   └── mail_mcp/
 │       ├── __init__.py
 │       ├── __main__.py
 │       ├── server.py           # MCP server & IMAP client

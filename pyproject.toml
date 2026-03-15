@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mail-mcp = "imap_mcp.server:run"
+mail-mcp = "mail_mcp.server:run"
 
 [project.optional-dependencies]
 dev = [

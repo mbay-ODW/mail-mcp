@@ -1,4 +1,4 @@
-# imap-mcp-server 测试计划
+# mail-mcp-server 测试计划
 
 ## 功能清单
 

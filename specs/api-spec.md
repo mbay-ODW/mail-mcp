@@ -2,7 +2,7 @@
 
 ## 1. 项目概述
 
-- **项目名称**: imap-mcp-server
+- **项目名称**: mail-mcp-server
 - **类型**: MCP (Model Context Protocol) Server for IMAP
 - **功能**: 提供 IMAP 邮件操作的标准接口，支持邮件读取、搜索、管理等功能
 - **目标用户**: AI 助手和需要邮件操作能力的应用
@@ -626,7 +626,7 @@ ERROR_CODES = {
 ```python
 import logging
 
-logger = logging.getLogger("imap_mcp")
+logger = logging.getLogger("mail_mcp")
 
 # 日志级别
 # DEBUG: 详细连接/协议信息

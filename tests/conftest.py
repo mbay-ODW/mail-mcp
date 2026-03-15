@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for imap-mcp-server tests.
+Pytest configuration and shared fixtures for mail-mcp-server tests.
 """
 
 import pytest

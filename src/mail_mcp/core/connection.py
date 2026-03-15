@@ -25,7 +25,7 @@ from .errors import (
     IMAPOperationTimeout,
 )
 
-logger = logging.getLogger("imap_mcp")
+logger = logging.getLogger("mail_mcp")
 
 
 # 默认超时设置

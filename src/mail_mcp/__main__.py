@@ -3,7 +3,7 @@
 IMAP MCP Server Entry Point
 
 Usage:
-    python -m imap_mcp
+    python -m mail_mcp
     
 Environment Variables:
     IMAP_HOST - IMAP server host
@@ -27,7 +27,7 @@ from .server import IMAPConfig, IMAPClient
 
 
 # 创建 MCP 服务器
-server = Server("imap-mcp-server")
+server = Server("mail-mcp-server")
 config = IMAPConfig.from_env()
 client = IMAPClient(config)
 

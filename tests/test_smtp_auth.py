@@ -2,7 +2,7 @@
 
 import pytest
 
-from imap_mcp.smtp.auth import (
+from mail_mcp.smtp.auth import (
     validate_email_address,
     validate_email_address_with_error,
     parse_recipients,

@@ -15,7 +15,7 @@ from .errors import (
     IMAPAccountLocked,
 )
 
-logger = logging.getLogger("imap_mcp")
+logger = logging.getLogger("mail_mcp")
 
 
 @dataclass

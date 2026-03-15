@@ -276,7 +276,7 @@ pytest tests/integration/test_smtp_server.py -v
 ```
 mail-mcp-server/
 ├── src/
-│   └── imap_mcp/
+│   └── mail_mcp/
 │       ├── __init__.py
 │       ├── __main__.py
 │       ├── server.py           # MCP 服务 & IMAP 客户端

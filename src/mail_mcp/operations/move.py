@@ -169,7 +169,7 @@ class EmailMove:
         self.copy_email(source_folder, uids, destination_folder)
         
         # Mark original as deleted
-        from imap_mcp.operations.flags import EmailFlags
+        from mail_mcp.operations.flags import EmailFlags
         flags = EmailFlags(self._conn)
         flags.mark_deleted(source_folder, uids)
         

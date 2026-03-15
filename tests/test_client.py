@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
-from imap_mcp.config import IMAPConfig
-from imap_mcp.client import IMAPClient, IMAP_OK
+from mail_mcp.config import IMAPConfig
+from mail_mcp.client import IMAPClient, IMAP_OK
 
 
 class TestIMAPClient:
@@ -35,7 +35,7 @@ class TestIMAPClient:
         assert b"OK" in IMAP_OK
         assert "OK" in IMAP_OK
 
-    @patch("imap_mcp.client.imaplib.IMAP4_SSL")
+    @patch("mail_mcp.client.imaplib.IMAP4_SSL")
     def test_connect_ssl(self, mock_imap_ssl, client):
         """Test SSL connection."""
         mock_conn = Mock()

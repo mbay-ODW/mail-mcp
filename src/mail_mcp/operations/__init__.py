@@ -8,17 +8,17 @@ Provides email operations including:
 - Move: Move, copy, delete, and append operations
 """
 
-from imap_mcp.operations.search import (
+from mail_mcp.operations.search import (
     EmailSearch,
     search_emails,
 )
 
-from imap_mcp.operations.fetch import (
+from mail_mcp.operations.fetch import (
     EmailFetch,
     get_email,
 )
 
-from imap_mcp.operations.flags import (
+from mail_mcp.operations.flags import (
     EmailFlags,
     mark_read,
     mark_unread,
@@ -26,7 +26,7 @@ from imap_mcp.operations.flags import (
     unmark_flagged,
 )
 
-from imap_mcp.operations.move import (
+from mail_mcp.operations.move import (
     EmailMove,
     move_email,
     copy_email,
@@ -34,7 +34,7 @@ from imap_mcp.operations.move import (
 )
 
 # Re-export error classes from core
-from imap_mcp.core import (
+from mail_mcp.core import (
     IMAPSearchError,
     IMAPSearchTimeout,
     IMAPSearchInvalidCondition,

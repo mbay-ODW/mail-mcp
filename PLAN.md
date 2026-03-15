@@ -1,4 +1,4 @@
-# imap-mcp-server 开发计划
+# mail-mcp-server 开发计划
 
 ## 项目概述
 基于 Python imaplib 封装的企业级 IMAP MCP 服务，支持完整的邮件管理操作。
@@ -62,11 +62,11 @@
 
 ## 目录结构
 ```
-imap-mcp-server/
+mail-mcp-server/
 ├── specs/              # 规格文档
 │   └── api-spec.md
 ├── src/
-│   └── imap_mcp/
+│   └── mail_mcp/
 │       ├── __init__.py
 │       ├── core/       # 连接管理
 │       ├── folders/    # 文件夹操作

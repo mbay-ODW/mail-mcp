@@ -8,13 +8,13 @@ Provides folder management operations including:
 - Getting folder status
 """
 
-from imap_mcp.folders.manager import (
+from mail_mcp.folders.manager import (
     FolderManager,
     list_all_folders,
 )
 
 # Re-export from core for backwards compatibility
-from imap_mcp.core import (
+from mail_mcp.core import (
     IMAPFolderNotFound,
     IMAPFolderAlreadyExists,
     IMAPFolderCreateFailed,
