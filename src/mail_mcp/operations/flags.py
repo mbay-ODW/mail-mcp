@@ -10,7 +10,6 @@ Provides functionality to manage email flags:
 """
 
 
-
 class EmailFlagsError(Exception):
     """Base exception for email flag operations."""
 
@@ -329,9 +328,7 @@ class EmailFlags:
         """
         return self._store_flags(folder, uids, "-FLAGS", flag)
 
-    def set_flags(
-        self, folder: str, uids: int | list[int], flags: str | list[str]
-    ) -> bool:
+    def set_flags(self, folder: str, uids: int | list[int], flags: str | list[str]) -> bool:
         """
         Set flags (replace all flags).
 

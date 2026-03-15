@@ -9,7 +9,6 @@ Provides functionality to:
 """
 
 
-
 class EmailMoveError(Exception):
     """Base exception for email move/copy operations."""
 
@@ -442,17 +441,13 @@ class EmailMove:
 
 
 # Convenience functions
-def move_email(
-    connection, source_folder: str, uids: int | list[int], dest_folder: str
-) -> bool:
+def move_email(connection, source_folder: str, uids: int | list[int], dest_folder: str) -> bool:
     """Move emails between folders."""
     mover = EmailMove(connection)
     return mover.move_email(source_folder, uids, dest_folder)
 
 
-def copy_email(
-    connection, source_folder: str, uids: int | list[int], dest_folder: str
-) -> bool:
+def copy_email(connection, source_folder: str, uids: int | list[int], dest_folder: str) -> bool:
     """Copy emails to another folder."""
     mover = EmailMove(connection)
     return mover.copy_email(source_folder, uids, dest_folder)

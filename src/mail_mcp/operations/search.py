@@ -343,9 +343,7 @@ class EmailSearch:
         """
         return self.search_emails(folder, {"text": text}, charset)
 
-    def search_by_sender(
-        self, folder: str, sender: str, charset: str | None = None
-    ) -> list[int]:
+    def search_by_sender(self, folder: str, sender: str, charset: str | None = None) -> list[int]:
         """
         Search for emails from specific sender.
 
@@ -361,9 +359,7 @@ class EmailSearch:
         """
         return self.search_emails(folder, {"from": sender}, charset)
 
-    def search_by_subject(
-        self, folder: str, subject: str, charset: str | None = None
-    ) -> list[int]:
+    def search_by_subject(self, folder: str, subject: str, charset: str | None = None) -> list[int]:
         """
         Search for emails with specific subject.
 

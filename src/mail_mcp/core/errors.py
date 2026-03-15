@@ -5,7 +5,6 @@
 """
 
 
-
 class IMAPError(Exception):
     """IMAP 操作基础异常"""
 

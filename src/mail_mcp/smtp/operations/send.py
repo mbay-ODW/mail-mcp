@@ -234,7 +234,9 @@ def send_reply(
                         pass
 
                 if orig_body:
-                    reply_text += f"\n\n--- 原始邮件 ---\nFrom: {orig_from}\nDate: {orig_date}\n\n{orig_body}"
+                    reply_text += (
+                        f"\n\n--- 原始邮件 ---\nFrom: {orig_from}\nDate: {orig_date}\n\n{orig_body}"
+                    )
 
             message = build_email_message(
                 sender=from_addr,
