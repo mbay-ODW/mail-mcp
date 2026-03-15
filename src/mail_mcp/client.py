@@ -1,15 +1,14 @@
 """IMAP Client module with connection management."""
 
-import imaplib
 import email
+import imaplib
 import re
 import threading
-from email.policy import default
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from email.policy import default
+from typing import Any
 
 from .config import IMAPConfig
-
 
 # IMAP status constants
 IMAP_OK = (b"OK", "OK")
@@ -20,8 +19,8 @@ class IMAPClient:
 
     def __init__(self, config: IMAPConfig):
         self.config = config
-        self._connection: Optional[imaplib.IMAP4_SSL] = None
-        self._connection_plain: Optional[imaplib.IMAP4] = None
+        self._connection: imaplib.IMAP4_SSL | None = None
+        self._connection_plain: imaplib.IMAP4 | None = None
 
     def connect(self) -> None:
         """Establish IMAP connection."""
@@ -65,7 +64,7 @@ class IMAPClient:
 
     # ==================== Folder Operations ====================
 
-    def list_folders(self) -> List[Dict[str, str]]:
+    def list_folders(self) -> list[dict[str, str]]:
         """List all folders."""
         conn = self._ensure_connected()
         status, folders = conn.list()
@@ -76,28 +75,30 @@ class IMAPClient:
             if folder:
                 parts = folder.decode().split('"')
                 if len(parts) >= 3:
-                    result.append({
-                        "flags": parts[0].strip(),
-                        "delimiter": parts[1],
-                        "name": parts[2].strip(),
-                    })
+                    result.append(
+                        {
+                            "flags": parts[0].strip(),
+                            "delimiter": parts[1],
+                            "name": parts[2].strip(),
+                        }
+                    )
         return result
 
-    def create_folder(self, folder_name: str) -> Dict[str, Any]:
+    def create_folder(self, folder_name: str) -> dict[str, Any]:
         """Create a new folder."""
         conn = self._ensure_connected()
         status, data = conn.create(folder_name)
         self._check_status(status, data, "Failed to create folder")
         return {"success": True, "folder": folder_name}
 
-    def delete_folder(self, folder_name: str) -> Dict[str, Any]:
+    def delete_folder(self, folder_name: str) -> dict[str, Any]:
         """Delete a folder."""
         conn = self._ensure_connected()
         status, data = conn.delete(folder_name)
         self._check_status(status, data, "Failed to delete folder")
         return {"success": True, "folder": folder_name}
 
-    def rename_folder(self, old_name: str, new_name: str) -> Dict[str, Any]:
+    def rename_folder(self, old_name: str, new_name: str) -> dict[str, Any]:
         """Rename a folder."""
         conn = self._ensure_connected()
         status, data = conn.rename(old_name, new_name)
@@ -110,11 +111,11 @@ class IMAPClient:
         self,
         folder: str = "INBOX",
         criteria: str = "ALL",
-        conditions: Dict[str, Any] = None,
+        conditions: dict[str, Any] = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Search emails with criteria.
-        
+
         Args:
             folder: 邮箱文件夹
             criteria: IMAP 搜索条件字符串 (如 "UNSEEN", "FROM xxx@xx.com")
@@ -129,23 +130,23 @@ class IMAPClient:
             criteria_parts = []
             for key, value in conditions.items():
                 key_lower = key.lower()
-                if key_lower == 'unseen' and value:
-                    criteria_parts.append('UNSEEN')
-                elif key_lower == 'seen' and value:
-                    criteria_parts.append('SEEN')
-                elif key_lower == 'flagged' and value:
-                    criteria_parts.append('FLAGGED')
-                elif key_lower == 'from':
-                    criteria_parts.extend(['FROM', str(value)])
-                elif key_lower == 'to':
-                    criteria_parts.extend(['TO', str(value)])
-                elif key_lower == 'subject':
-                    criteria_parts.extend(['SUBJECT', str(value)])
-                elif key_lower == 'since':
-                    criteria_parts.extend(['SINCE', str(value)])
-                elif key_lower == 'before':
-                    criteria_parts.extend(['BEFORE', str(value)])
-            criteria = ' '.join(criteria_parts) if criteria_parts else 'ALL'
+                if key_lower == "unseen" and value:
+                    criteria_parts.append("UNSEEN")
+                elif key_lower == "seen" and value:
+                    criteria_parts.append("SEEN")
+                elif key_lower == "flagged" and value:
+                    criteria_parts.append("FLAGGED")
+                elif key_lower == "from":
+                    criteria_parts.extend(["FROM", str(value)])
+                elif key_lower == "to":
+                    criteria_parts.extend(["TO", str(value)])
+                elif key_lower == "subject":
+                    criteria_parts.extend(["SUBJECT", str(value)])
+                elif key_lower == "since":
+                    criteria_parts.extend(["SINCE", str(value)])
+                elif key_lower == "before":
+                    criteria_parts.extend(["BEFORE", str(value)])
+            criteria = " ".join(criteria_parts) if criteria_parts else "ALL"
 
         status, message_ids = conn.search(None, criteria)
         self._check_status(status, message_ids, "Search failed")
@@ -159,8 +160,10 @@ class IMAPClient:
         # Batch fetch for better performance - 使用 HEADER.FIELDS 获取需要的字段
         ids_str = b",".join(ids)
         # 使用 BODY.PEEK[HEADER.FIELDS ...] 批量获取邮件头
-        status, fetch_data = conn.fetch(ids_str, "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE)])")
-        
+        status, fetch_data = conn.fetch(
+            ids_str, "(UID FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE)])"
+        )
+
         result = []
         if status in IMAP_OK and fetch_data:
             # IMAP 批量 fetch 响应格式：
@@ -171,46 +174,48 @@ class IMAPClient:
                 if isinstance(item, tuple) and len(item) >= 2:
                     try:
                         # 解析邮件头行: b'6911 (UID 9859 FLAGS (\Seen) BODY[...] {size}'
-                        header_line = item[0].decode('utf-8', errors='replace')
-                        
+                        header_line = item[0].decode("utf-8", errors="replace")
+
                         # 提取消息 ID
-                        msg_id_match = re.match(r'(\d+)\s+\(', header_line)
+                        msg_id_match = re.match(r"(\d+)\s+\(", header_line)
                         msg_id = msg_id_match.group(1) if msg_id_match else ""
-                        
+
                         # 提取 UID
-                        uid_match = re.search(r'UID\s+(\d+)', header_line)
+                        uid_match = re.search(r"UID\s+(\d+)", header_line)
                         uid = uid_match.group(1) if uid_match else ""
-                        
+
                         # 提取 FLAGS
-                        flags_match = re.search(r'FLAGS\s*\(([^)]*)\)', header_line)
+                        flags_match = re.search(r"FLAGS\s*\(([^)]*)\)", header_line)
                         flags = flags_match.group(1).split() if flags_match else []
-                        
+
                         # 解析邮件头数据
                         header_data = item[1]
                         if header_data:
                             header_msg = email.message_from_bytes(header_data, policy=default)
-                            result.append({
-                                "id": msg_id,
-                                "uid": uid,
-                                "flags": flags,
-                                "subject": header_msg.get("Subject", ""),
-                                "from": header_msg.get("From", ""),
-                                "to": header_msg.get("To", ""),
-                                "date": header_msg.get("Date", ""),
-                            })
+                            result.append(
+                                {
+                                    "id": msg_id,
+                                    "uid": uid,
+                                    "flags": flags,
+                                    "subject": header_msg.get("Subject", ""),
+                                    "from": header_msg.get("From", ""),
+                                    "to": header_msg.get("To", ""),
+                                    "date": header_msg.get("Date", ""),
+                                }
+                            )
                     except Exception:
                         pass
 
         return result
 
-    def _extract_uid_from_header(self, header: bytes) -> Optional[str]:
+    def _extract_uid_from_header(self, header: bytes) -> str | None:
         """Extract UID from fetch response header."""
-        match = re.search(rb'UID\s+(\d+)', header)
+        match = re.search(rb"UID\s+(\d+)", header)
         return match.group(1).decode() if match else None
 
-    def _extract_flags_from_header(self, header: bytes) -> List[str]:
+    def _extract_flags_from_header(self, header: bytes) -> list[str]:
         """Extract flags from fetch response header."""
-        match = re.search(rb'FLAGS\s*\(([^)]*)\)', header)
+        match = re.search(rb"FLAGS\s*\(([^)]*)\)", header)
         if match:
             flags_str = match.group(1).decode().strip()
             return flags_str.split() if flags_str else []
@@ -221,10 +226,10 @@ class IMAPClient:
     def get_email(
         self,
         folder: str = "INBOX",
-        message_id: Optional[str] = None,
-        uid: Optional[str] = None,
+        message_id: str | None = None,
+        uid: str | None = None,
         include_body: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get email details by message ID or UID."""
         conn = self._ensure_connected()
         conn.select(folder)
@@ -234,7 +239,9 @@ class IMAPClient:
         else:
             query = message_id
 
-        status, msg_data = conn.fetch(query, "(UID FLAGS ENVELOPE BODY)" if include_body else "(UID FLAGS ENVELOPE)")
+        status, msg_data = conn.fetch(
+            query, "(UID FLAGS ENVELOPE BODY)" if include_body else "(UID FLAGS ENVELOPE)"
+        )
         self._check_status(status, msg_data, "Failed to fetch email")
 
         if not msg_data or not msg_data[0]:
@@ -242,9 +249,7 @@ class IMAPClient:
 
         envelope = msg_data[0]
         if isinstance(envelope, tuple):
-            msg = email.message_from_bytes(
-                envelope[1], policy=default
-            )
+            msg = email.message_from_bytes(envelope[1], policy=default)
 
             result = {
                 "id": message_id or uid,
@@ -269,10 +274,12 @@ class IMAPClient:
                         elif content_type == "text/html" and not result["body_html"]:
                             result["body_html"] = self._get_part_content(part)
                         if part.get_content_disposition() == "attachment":
-                            result["attachments"].append({
-                                "filename": part.get_filename() or "unknown",
-                                "content_type": content_type,
-                            })
+                            result["attachments"].append(
+                                {
+                                    "filename": part.get_filename() or "unknown",
+                                    "content_type": content_type,
+                                }
+                            )
                 else:
                     result["body_text"] = self._get_part_content(msg)
 
@@ -280,7 +287,7 @@ class IMAPClient:
 
         raise Exception("Failed to parse email")
 
-    def _get_uid(self, msg_data: Any) -> Optional[str]:
+    def _get_uid(self, msg_data: Any) -> str | None:
         """Extract UID from message data."""
         for item in msg_data:
             if isinstance(item, tuple):
@@ -288,7 +295,7 @@ class IMAPClient:
                     return item[1].decode() if isinstance(item[1], bytes) else str(item[1])
         return None
 
-    def _parse_flags(self, msg_data: Any) -> List[str]:
+    def _parse_flags(self, msg_data: Any) -> list[str]:
         """Parse flags from message data."""
         for item in msg_data:
             if isinstance(item, tuple):
@@ -316,47 +323,47 @@ class IMAPClient:
     def mark_read(
         self,
         folder: str = "INBOX",
-        message_id: Optional[str] = None,
-        uid: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        message_id: str | None = None,
+        uid: str | None = None,
+    ) -> dict[str, Any]:
         """Mark email as read (SEEN)."""
         return self._set_flag(folder, message_id, uid, "+FLAGS", "\\Seen")
 
     def mark_unread(
         self,
         folder: str = "INBOX",
-        message_id: Optional[str] = None,
-        uid: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        message_id: str | None = None,
+        uid: str | None = None,
+    ) -> dict[str, Any]:
         """Mark email as unread (remove SEEN flag)."""
         return self._set_flag(folder, message_id, uid, "-FLAGS", "\\Seen")
 
     def mark_flagged(
         self,
         folder: str = "INBOX",
-        message_id: Optional[str] = None,
-        uid: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        message_id: str | None = None,
+        uid: str | None = None,
+    ) -> dict[str, Any]:
         """Mark email as flagged (starred)."""
         return self._set_flag(folder, message_id, uid, "+FLAGS", "\\Flagged")
 
     def unmark_flagged(
         self,
         folder: str = "INBOX",
-        message_id: Optional[str] = None,
-        uid: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        message_id: str | None = None,
+        uid: str | None = None,
+    ) -> dict[str, Any]:
         """Unmark email as flagged."""
         return self._set_flag(folder, message_id, uid, "-FLAGS", "\\Flagged")
 
     def _set_flag(
         self,
         folder: str,
-        message_id: Optional[str],
-        uid: Optional[str],
+        message_id: str | None,
+        uid: str | None,
         mode: str,
         flag: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Set or unset a flag on an email."""
         conn = self._ensure_connected()
         conn.select(folder)
@@ -383,9 +390,9 @@ class IMAPClient:
         self,
         source_folder: str,
         target_folder: str,
-        message_id: Optional[str] = None,
-        uid: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        message_id: str | None = None,
+        uid: str | None = None,
+    ) -> dict[str, Any]:
         """Move email to another folder."""
         conn = self._ensure_connected()
         conn.select(source_folder)
@@ -410,9 +417,9 @@ class IMAPClient:
         self,
         source_folder: str,
         target_folder: str,
-        message_id: Optional[str] = None,
-        uid: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        message_id: str | None = None,
+        uid: str | None = None,
+    ) -> dict[str, Any]:
         """Copy email to another folder."""
         conn = self._ensure_connected()
         conn.select(source_folder)
@@ -436,9 +443,9 @@ class IMAPClient:
     def delete_email(
         self,
         folder: str = "INBOX",
-        message_id: Optional[str] = None,
-        uid: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        message_id: str | None = None,
+        uid: str | None = None,
+    ) -> dict[str, Any]:
         """Delete email (mark as Deleted)."""
         conn = self._ensure_connected()
         conn.select(folder)
@@ -467,7 +474,7 @@ class IMAPClient:
 
 
 # Global client instance with thread-safe lock
-_imap_client: Optional[IMAPClient] = None
+_imap_client: IMAPClient | None = None
 _imap_lock = threading.Lock()
 
 

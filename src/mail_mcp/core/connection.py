@@ -4,25 +4,24 @@ IMAP 连接管理模块
 提供 IMAP 连接的上下文管理器和连接池支持。
 """
 
-import logging
 import imaplib
-import ssl as ssl_module
+import logging
 import socket
-from ssl import SSLContext
+import ssl as ssl_module
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Generator, Optional
 from datetime import datetime, timedelta
+from ssl import SSLContext
 
 from .auth import AuthHandler, IMAPCredentials
 from .errors import (
     IMAPConnectionError,
     IMAPConnectionTimeout,
-    IMAPSSLError,
     IMAPHostUnreachable,
     IMAPNotConnectedError,
     IMAPProtocolError,
-    IMAPOperationTimeout,
+    IMAPSSLError,
 )
 
 logger = logging.getLogger("mail_mcp")
@@ -47,7 +46,7 @@ class ConnectionConfig:
     search_timeout: int = SEARCH_TIMEOUT
 
     # SSL 配置
-    ssl_context: Optional[SSLContext] = None
+    ssl_context: SSLContext | None = None
     ssl_verify: bool = True
 
     # 调试
@@ -79,10 +78,10 @@ class IMAPConnection:
 
     def __init__(self, config: ConnectionConfig):
         self.config = config
-        self._connection: Optional[imaplib.IMAP4] = None
+        self._connection: imaplib.IMAP4 | None = None
         self._connected: bool = False
-        self._selected_folder: Optional[str] = None
-        self._last_activity: Optional[datetime] = None
+        self._selected_folder: str | None = None
+        self._last_activity: datetime | None = None
         self._auth_handler = AuthHandler(config.to_credentials())
 
     @property
@@ -99,22 +98,22 @@ class IMAPConnection:
             return False
 
     @property
-    def selected_folder(self) -> Optional[str]:
+    def selected_folder(self) -> str | None:
         """当前选中的文件夹"""
         return self._selected_folder
 
     @property
-    def raw(self) -> Optional[imaplib.IMAP4]:
+    def raw(self) -> imaplib.IMAP4 | None:
         """获取原始 IMAP 连接对象"""
         return self._connection
 
     # 代理常用 IMAP 方法
-    def list(self, directory: str = '', pattern: str = '*'):
+    def list(self, directory: str = "", pattern: str = "*"):
         """列出文件夹 (代理到原始连接)"""
         if self._connection is None:
             raise IMAPNotConnectedError("Not connected to IMAP server")
         # 直接调用 list() 不带参数，因为阿里云不支持 list('', '*')
-        if directory == '' and pattern == '*':
+        if directory == "" and pattern == "*":
             return self._connection.list()
         return self._connection.list(directory, pattern)
 
@@ -190,13 +189,13 @@ class IMAPConnection:
             raise IMAPNotConnectedError("Not connected to IMAP server")
         return self._connection.expunge()
 
-    def select(self, mailbox: str = 'INBOX', readonly: bool = False):
+    def select(self, mailbox: str = "INBOX", readonly: bool = False):
         """选择邮箱 (代理到原始连接)"""
         if self._connection is None:
             raise IMAPNotConnectedError("Not connected to IMAP server")
         return self._connection.select(mailbox, readonly)
 
-    def lsub(self, directory: str = '', pattern: str = '*'):
+    def lsub(self, directory: str = "", pattern: str = "*"):
         """列出订阅的文件夹 (代理到原始连接)"""
         if self._connection is None:
             raise IMAPNotConnectedError("Not connected to IMAP server")
@@ -247,11 +246,10 @@ class IMAPConnection:
             self._last_activity = datetime.now()
 
             logger.info(
-                f"Successfully connected to {config.host}:{config.port} "
-                f"as {config.username}"
+                f"Successfully connected to {config.host}:{config.port} as {config.username}"
             )
 
-        except socket.timeout as e:
+        except TimeoutError as e:
             raise IMAPConnectionTimeout(
                 f"Connection to {config.host}:{config.port} timed out",
                 host=config.host,
@@ -274,6 +272,7 @@ class IMAPConnection:
             error_bytes = str(e).encode()
             if b"AUTHENTICATIONFAILED" in error_bytes:
                 from .errors import IMAPInvalidCredentials
+
                 raise IMAPInvalidCredentials(str(e)) from e
             raise IMAPConnectionError(
                 f"IMAP error during connection: {e}",

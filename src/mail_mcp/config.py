@@ -7,6 +7,7 @@ from dataclasses import dataclass
 @dataclass
 class IMAPConfig:
     """IMAP configuration from environment variables."""
+
     host: str
     port: int
     user: str

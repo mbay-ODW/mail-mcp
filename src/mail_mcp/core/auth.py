@@ -6,13 +6,12 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from .errors import (
-    IMAPAuthError,
-    IMAPInvalidCredentials,
-    IMAPAuthMethodNotSupported,
     IMAPAccountLocked,
+    IMAPAuthError,
+    IMAPAuthMethodNotSupported,
+    IMAPInvalidCredentials,
 )
 
 logger = logging.getLogger("mail_mcp")
@@ -85,15 +84,11 @@ class AuthHandler:
             error_msg = str(e).upper()
 
             if "AUTHENTICATIONFAILED" in error_msg:
-                raise IMAPInvalidCredentials(
-                    f"Invalid username or password: {e}"
-                ) from e
+                raise IMAPInvalidCredentials(f"Invalid username or password: {e}") from e
             elif "LOCKED" in error_msg or "LOCK" in error_msg:
                 raise IMAPAccountLocked(f"Account is locked: {e}") from e
             elif "CANNOT" in error_msg and "AUTH" in error_msg:
-                raise IMAPAuthMethodNotSupported(
-                    f"Authentication method not supported: {e}"
-                ) from e
+                raise IMAPAuthMethodNotSupported(f"Authentication method not supported: {e}") from e
             else:
                 raise IMAPAuthError(f"Authentication failed: {e}") from e
 
@@ -122,7 +117,11 @@ class AuthHandler:
         try:
             typ, capabilities = imap_connection.capability()
             if typ == "OK" and capabilities:
-                caps = capabilities[0].decode() if isinstance(capabilities[0], bytes) else capabilities[0]
+                caps = (
+                    capabilities[0].decode()
+                    if isinstance(capabilities[0], bytes)
+                    else capabilities[0]
+                )
                 logger.debug(f"Server capabilities: {caps}")
 
                 # 提取 AUTH 方法

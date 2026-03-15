@@ -1,15 +1,13 @@
 """SMTP 连接管理"""
+
 import os
 import smtplib
 import socket
 from dataclasses import dataclass
-from typing import List, Optional
 
 from .errors import (
-    SMTPConnectionError,
     SMTPAuthError,
-    SMTPSendError,
-    SMTPRecipientsError,
+    SMTPConnectionError,
 )
 
 
@@ -51,7 +49,7 @@ class SMTPClient:
             config: SMTP 配置
         """
         self.config = config
-        self._connection: Optional[smtplib.SMTP] = None
+        self._connection: smtplib.SMTP | None = None
         self._is_connected: bool = False
 
     @property
@@ -107,7 +105,7 @@ class SMTPClient:
                 host=self.config.host,
                 port=self.config.port,
             )
-        except socket.timeout as e:
+        except TimeoutError as e:
             raise SMTPConnectionError(
                 f"连接超时: {str(e)}",
                 host=self.config.host,

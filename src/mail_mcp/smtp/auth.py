@@ -2,8 +2,8 @@
 
 提供 SMTP 认证相关的辅助功能。
 """
+
 import base64
-from typing import List, Optional, Tuple
 
 
 def generate_oauth2_string(
@@ -28,13 +28,7 @@ def generate_oauth2_string(
     user = user.encode("ascii")
     access_token = access_token.encode("ascii")
 
-    return base64.b64encode(
-        auth_string
-        + b"\x00"
-        + user
-        + b"\x00"
-        + access_token
-    ).decode("ascii")
+    return base64.b64encode(auth_string + b"\x00" + user + b"\x00" + access_token).decode("ascii")
 
 
 def validate_email_address(email: str) -> bool:
@@ -56,7 +50,7 @@ def validate_email_address(email: str) -> bool:
     return True
 
 
-def validate_email_address_with_error(email: str) -> Tuple[bool, str]:
+def validate_email_address_with_error(email: str) -> tuple[bool, str]:
     """验证邮箱地址格式，返回详细错误信息
 
     Args:
@@ -72,7 +66,7 @@ def validate_email_address_with_error(email: str) -> Tuple[bool, str]:
     return True, ""
 
 
-def parse_recipients(recipients: str) -> Tuple[List[str], List[str]]:
+def parse_recipients(recipients: str) -> tuple[list[str], list[str]]:
     """解析收件人字符串
 
     支持逗号、分号、空格分隔的多个邮箱地址。

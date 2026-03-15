@@ -1,7 +1,6 @@
 """Tests for IMAP configuration."""
 
 import os
-import pytest
 from unittest.mock import patch
 
 from mail_mcp.config import IMAPConfig
@@ -26,13 +25,16 @@ class TestIMAPConfig:
 
     def test_from_env(self):
         """Test creating config from environment variables."""
-        with patch.dict(os.environ, {
-            "IMAP_HOST": "imap.test.com",
-            "IMAP_PORT": "993",
-            "EMAIL_USER": "user@test.com",
-            "EMAIL_PASSWORD": "secret",
-            "IMAP_SSL": "true",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "IMAP_HOST": "imap.test.com",
+                "IMAP_PORT": "993",
+                "EMAIL_USER": "user@test.com",
+                "EMAIL_PASSWORD": "secret",
+                "IMAP_SSL": "true",
+            },
+        ):
             config = IMAPConfig.from_env()
             assert config.host == "imap.test.com"
             assert config.port == 993
@@ -42,13 +44,16 @@ class TestIMAPConfig:
 
     def test_from_env_ssl_false(self):
         """Test SSL disabled from environment."""
-        with patch.dict(os.environ, {
-            "IMAP_HOST": "imap.test.com",
-            "IMAP_PORT": "143",
-            "EMAIL_USER": "user@test.com",
-            "EMAIL_PASSWORD": "secret",
-            "IMAP_SSL": "false",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "IMAP_HOST": "imap.test.com",
+                "IMAP_PORT": "143",
+                "EMAIL_USER": "user@test.com",
+                "EMAIL_PASSWORD": "secret",
+                "IMAP_SSL": "false",
+            },
+        ):
             config = IMAPConfig.from_env()
             assert config.ssl is False
             assert config.port == 143

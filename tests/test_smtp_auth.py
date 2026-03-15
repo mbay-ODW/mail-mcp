@@ -1,12 +1,11 @@
 """Tests for SMTP authentication utilities."""
 
-import pytest
 
 from mail_mcp.smtp.auth import (
+    generate_oauth2_string,
+    parse_recipients,
     validate_email_address,
     validate_email_address_with_error,
-    parse_recipients,
-    generate_oauth2_string,
 )
 
 

@@ -1,10 +1,11 @@
 """Tests for IMAP client."""
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
+import pytest
+
+from mail_mcp.client import IMAP_OK, IMAPClient
 from mail_mcp.config import IMAPConfig
-from mail_mcp.client import IMAPClient, IMAP_OK
 
 
 class TestIMAPClient:

@@ -4,7 +4,6 @@
 定义 IMAP 操作相关的自定义异常。
 """
 
-from typing import Optional
 
 
 class IMAPError(Exception):
@@ -14,7 +13,7 @@ class IMAPError(Exception):
         self,
         message: str,
         error_code: str = "9002",
-        details: Optional[dict] = None,
+        details: dict | None = None,
     ):
         super().__init__(message)
         self.message = message
@@ -43,9 +42,7 @@ class IMAPConnectionError(IMAPError):
 class IMAPConnectionTimeout(IMAPError):
     """IMAP 连接超时"""
 
-    def __init__(
-        self, message: str = "Connection to IMAP server timed out", **kwargs
-    ):
+    def __init__(self, message: str = "Connection to IMAP server timed out", **kwargs):
         super().__init__(message, "1002", kwargs)
 
 
@@ -83,9 +80,7 @@ class IMAPInvalidCredentials(IMAPError):
 class IMAPAuthMethodNotSupported(IMAPError):
     """认证方法不支持"""
 
-    def __init__(
-        self, message: str = "Authentication method not supported", **kwargs
-    ):
+    def __init__(self, message: str = "Authentication method not supported", **kwargs):
         super().__init__(message, "2003", kwargs)
 
 
@@ -103,18 +98,14 @@ class IMAPFolderNotFound(IMAPError):
     """文件夹不存在"""
 
     def __init__(self, folder: str, **kwargs):
-        super().__init__(
-            f"Folder not found: {folder}", "3001", {**kwargs, "folder": folder}
-        )
+        super().__init__(f"Folder not found: {folder}", "3001", {**kwargs, "folder": folder})
 
 
 class IMAPFolderAlreadyExists(IMAPError):
     """文件夹已存在"""
 
     def __init__(self, folder: str, **kwargs):
-        super().__init__(
-            f"Folder already exists: {folder}", "3002", {**kwargs, "folder": folder}
-        )
+        super().__init__(f"Folder already exists: {folder}", "3002", {**kwargs, "folder": folder})
 
 
 class IMAPFolderCreateFailed(IMAPError):
@@ -290,9 +281,7 @@ class IMAPInvalidParameterError(IMAPError):
     """无效参数"""
 
     def __init__(self, param: str, **kwargs):
-        super().__init__(
-            f"Invalid parameter: {param}", "9004", {**kwargs, "parameter": param}
-        )
+        super().__init__(f"Invalid parameter: {param}", "9004", {**kwargs, "parameter": param})
 
 
 class IMAPOperationTimeout(IMAPError):

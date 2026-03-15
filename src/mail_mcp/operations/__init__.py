@@ -8,44 +8,40 @@ Provides email operations including:
 - Move: Move, copy, delete, and append operations
 """
 
-from mail_mcp.operations.search import (
-    EmailSearch,
-    search_emails,
+# Re-export error classes from core
+from mail_mcp.core import (
+    IMAPEmailCopyFailed,
+    IMAPEmailDeleteFailed,
+    IMAPEmailFetchFailed,
+    IMAPEmailFlagFailed,
+    IMAPEmailMoveFailed,
+    IMAPEmailNotFound,
+    IMAPEmailParseFailed,
+    IMAPInvalidParameterError,
+    IMAPSearchError,
+    IMAPSearchInvalidCondition,
+    IMAPSearchTimeout,
 )
-
 from mail_mcp.operations.fetch import (
     EmailFetch,
     get_email,
 )
-
 from mail_mcp.operations.flags import (
     EmailFlags,
+    mark_flagged,
     mark_read,
     mark_unread,
-    mark_flagged,
     unmark_flagged,
 )
-
 from mail_mcp.operations.move import (
     EmailMove,
-    move_email,
     copy_email,
     delete_email,
+    move_email,
 )
-
-# Re-export error classes from core
-from mail_mcp.core import (
-    IMAPSearchError,
-    IMAPSearchTimeout,
-    IMAPSearchInvalidCondition,
-    IMAPEmailNotFound,
-    IMAPEmailFetchFailed,
-    IMAPEmailDeleteFailed,
-    IMAPEmailMoveFailed,
-    IMAPEmailCopyFailed,
-    IMAPEmailFlagFailed,
-    IMAPEmailParseFailed,
-    IMAPInvalidParameterError,
+from mail_mcp.operations.search import (
+    EmailSearch,
+    search_emails,
 )
 
 # Backwards compatibility aliases
@@ -56,40 +52,36 @@ EmailMoveError = IMAPEmailMoveFailed
 
 __all__ = [
     # Search
-    'EmailSearchError',
-    'IMAPSearchError',
-    'IMAPSearchTimeout',
-    'IMAPSearchInvalidCondition',
-    'EmailSearch',
-    'search_emails',
-    
+    "EmailSearchError",
+    "IMAPSearchError",
+    "IMAPSearchTimeout",
+    "IMAPSearchInvalidCondition",
+    "EmailSearch",
+    "search_emails",
     # Fetch
-    'EmailFetchError',
-    'IMAPEmailNotFound',
-    'IMAPEmailFetchFailed',
-    'IMAPEmailParseFailed',
-    'EmailFetch',
-    'get_email',
-    
+    "EmailFetchError",
+    "IMAPEmailNotFound",
+    "IMAPEmailFetchFailed",
+    "IMAPEmailParseFailed",
+    "EmailFetch",
+    "get_email",
     # Flags
-    'EmailFlagsError',
-    'IMAPEmailFlagFailed',
-    'EmailFlags',
-    'mark_read',
-    'mark_unread',
-    'mark_flagged',
-    'unmark_flagged',
-    
+    "EmailFlagsError",
+    "IMAPEmailFlagFailed",
+    "EmailFlags",
+    "mark_read",
+    "mark_unread",
+    "mark_flagged",
+    "unmark_flagged",
     # Move
-    'EmailMoveError',
-    'IMAPEmailMoveFailed',
-    'IMAPEmailCopyFailed',
-    'IMAPEmailDeleteFailed',
-    'EmailMove',
-    'move_email',
-    'copy_email',
-    'delete_email',
-    
+    "EmailMoveError",
+    "IMAPEmailMoveFailed",
+    "IMAPEmailCopyFailed",
+    "IMAPEmailDeleteFailed",
+    "EmailMove",
+    "move_email",
+    "copy_email",
+    "delete_email",
     # Common
-    'IMAPInvalidParameterError',
+    "IMAPInvalidParameterError",
 ]

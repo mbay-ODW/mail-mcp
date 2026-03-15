@@ -5,7 +5,6 @@
 
 import threading
 from dataclasses import dataclass
-from typing import Optional
 
 from .auth import (
     LoginAuth,
@@ -20,28 +19,29 @@ from .connection import SMTPClient, SMTPConfig
 from .errors import (
     SMTPAuthError,
     SMTPConnectionError,
+    SMTPErrors,
     SMTPRecipientsError,
     SMTPSendError,
-    SMTPErrors,
 )
 
 
 @dataclass
 class Attachment:
     """Email attachment.
-    
+
     Attributes:
         filename: Attachment filename
         content_type: MIME content type
         data: Raw attachment data as bytes
     """
+
     filename: str
     content_type: str
     data: bytes
 
 
 # Global SMTP client instance with thread-safe lock
-_smtp_client: Optional[SMTPClient] = None
+_smtp_client: SMTPClient | None = None
 _smtp_lock = threading.Lock()
 
 

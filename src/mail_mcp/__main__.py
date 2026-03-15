@@ -4,7 +4,7 @@ IMAP MCP Server Entry Point
 
 Usage:
     python -m mail_mcp
-    
+
 Environment Variables:
     IMAP_HOST - IMAP server host
     IMAP_PORT - IMAP server port (default: 993)
@@ -21,10 +21,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
-from .server import IMAPConfig, IMAPClient
-
+from .server import IMAPClient, IMAPConfig
 
 # 创建 MCP 服务器
 server = Server("mail-mcp-server")
@@ -39,7 +38,7 @@ async def list_tools():
         Tool(
             name="list_folders",
             description="列出所有邮箱文件夹",
-            inputSchema={"type": "object", "properties": {}, "required": []}
+            inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
             name="search_emails",
@@ -48,10 +47,13 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX", "description": "邮箱文件夹"},
-                    "conditions": {"type": "object", "description": "搜索条件，如 {'unseen': true, 'from': 'xxx@xx.com'}"}
+                    "conditions": {
+                        "type": "object",
+                        "description": "搜索条件，如 {'unseen': true, 'from': 'xxx@xx.com'}",
+                    },
                 },
-                "required": []
-            }
+                "required": [],
+            },
         ),
         Tool(
             name="mark_read",
@@ -60,10 +62,10 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
-                    "uid": {"type": "integer", "description": "邮件 UID"}
+                    "uid": {"type": "integer", "description": "邮件 UID"},
                 },
-                "required": ["uid"]
-            }
+                "required": ["uid"],
+            },
         ),
         Tool(
             name="mark_unread",
@@ -72,10 +74,10 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
-                    "uid": {"type": "integer", "description": "邮件 UID"}
+                    "uid": {"type": "integer", "description": "邮件 UID"},
                 },
-                "required": ["uid"]
-            }
+                "required": ["uid"],
+            },
         ),
         Tool(
             name="mark_flagged",
@@ -84,10 +86,10 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
-                    "uid": {"type": "integer", "description": "邮件 UID"}
+                    "uid": {"type": "integer", "description": "邮件 UID"},
                 },
-                "required": ["uid"]
-            }
+                "required": ["uid"],
+            },
         ),
         Tool(
             name="unmark_flagged",
@@ -96,10 +98,10 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
-                    "uid": {"type": "integer", "description": "邮件 UID"}
+                    "uid": {"type": "integer", "description": "邮件 UID"},
                 },
-                "required": ["uid"]
-            }
+                "required": ["uid"],
+            },
         ),
         Tool(
             name="move_email",
@@ -109,10 +111,10 @@ async def list_tools():
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
                     "uid": {"type": "integer", "description": "邮件 UID"},
-                    "destination": {"type": "string", "description": "目标文件夹"}
+                    "destination": {"type": "string", "description": "目标文件夹"},
                 },
-                "required": ["uid", "destination"]
-            }
+                "required": ["uid", "destination"],
+            },
         ),
         Tool(
             name="delete_email",
@@ -121,10 +123,10 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
-                    "uid": {"type": "integer", "description": "邮件 UID"}
+                    "uid": {"type": "integer", "description": "邮件 UID"},
                 },
-                "required": ["uid"]
-            }
+                "required": ["uid"],
+            },
         ),
         Tool(
             name="get_email",
@@ -133,10 +135,10 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
-                    "uid": {"type": "integer", "description": "邮件 UID"}
+                    "uid": {"type": "integer", "description": "邮件 UID"},
                 },
-                "required": ["uid"]
-            }
+                "required": ["uid"],
+            },
         ),
     ]
 
@@ -146,59 +148,60 @@ async def call_tool(name: str, arguments: dict):
     """执行工具调用"""
     try:
         client.connect()
-        
+
         if name == "list_folders":
             result = client.list_folders()
-            
+
         elif name == "search_emails":
             folder = arguments.get("folder", "INBOX")
             conditions = arguments.get("conditions", {})
             result = client.search_emails(folder, conditions=conditions)
-            
+
         elif name == "mark_read":
             folder = arguments.get("folder", "INBOX")
             uid = arguments["uid"]
             result = client.mark_read(folder, uid)
-            
+
         elif name == "mark_unread":
             folder = arguments.get("folder", "INBOX")
             uid = arguments["uid"]
             result = client.mark_unread(folder, uid)
-            
+
         elif name == "mark_flagged":
             folder = arguments.get("folder", "INBOX")
             uid = arguments["uid"]
             result = client.mark_flagged(folder, uid)
-            
+
         elif name == "unmark_flagged":
             folder = arguments.get("folder", "INBOX")
             uid = arguments["uid"]
             result = client.unmark_flagged(folder, uid)
-            
+
         elif name == "move_email":
             folder = arguments.get("folder", "INBOX")
             uid = arguments["uid"]
             destination = arguments["destination"]
             result = client.move_email(folder, uid, destination)
-            
+
         elif name == "delete_email":
             folder = arguments.get("folder", "INBOX")
             uid = arguments["uid"]
             result = client.delete_email(folder, uid)
-            
+
         elif name == "get_email":
             folder = arguments.get("folder", "INBOX")
             uid = arguments["uid"]
             result = client.get_email(folder, uid)
-            
+
         else:
             result = {"error": f"Unknown tool: {name}"}
-        
+
         client.disconnect()
-        
+
         import json
+
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-        
+
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 

@@ -10,7 +10,6 @@ from mcp.types import TextContent
 
 from .tools import get_all_tools, handle_imap_tool, handle_smtp_tool
 
-
 # Create MCP Server
 app = Server("mail-mcp-server")
 
@@ -54,6 +53,7 @@ async def main():
 def run():
     """Synchronous entry point for console script."""
     import asyncio
+
     asyncio.run(main())
 
 

@@ -1,16 +1,15 @@
 """MCP Tools definitions and handlers for IMAP operations."""
 
 import base64
-from typing import List
 
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
 from ..client import get_imap_client
 from ..smtp import Attachment, get_smtp_client
-from ..smtp.operations import send_email, send_reply, send_forward
+from ..smtp.operations import send_email, send_forward, send_reply
 
 
-def get_imap_tools() -> List[Tool]:
+def get_imap_tools() -> list[Tool]:
     """Get all IMAP-related tool definitions."""
     return [
         Tool(
@@ -323,7 +322,7 @@ def get_imap_tools() -> List[Tool]:
     ]
 
 
-def get_smtp_tools() -> List[Tool]:
+def get_smtp_tools() -> list[Tool]:
     """Get all SMTP-related tool definitions."""
     return [
         Tool(
@@ -449,12 +448,12 @@ def get_smtp_tools() -> List[Tool]:
     ]
 
 
-def get_all_tools() -> List[Tool]:
+def get_all_tools() -> list[Tool]:
     """Get all tool definitions."""
     return get_imap_tools() + get_smtp_tools()
 
 
-async def handle_imap_tool(name: str, arguments: dict) -> List[TextContent]:
+async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle IMAP tool calls."""
     client = get_imap_client()
 
@@ -556,7 +555,7 @@ async def handle_imap_tool(name: str, arguments: dict) -> List[TextContent]:
     return None  # Not an IMAP tool
 
 
-async def handle_smtp_tool(name: str, arguments: dict) -> List[TextContent]:
+async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle SMTP tool calls."""
     imap_client = get_imap_client()
     smtp_client = get_smtp_client()
@@ -565,11 +564,13 @@ async def handle_smtp_tool(name: str, arguments: dict) -> List[TextContent]:
         # Parse attachments
         attachments = []
         for att in arguments.get("attachments", []):
-            attachments.append(Attachment(
-                filename=att["filename"],
-                content_type=att.get("content_type", "application/octet-stream"),
-                data=base64.b64decode(att["data_base64"]),
-            ))
+            attachments.append(
+                Attachment(
+                    filename=att["filename"],
+                    content_type=att.get("content_type", "application/octet-stream"),
+                    data=base64.b64decode(att["data_base64"]),
+                )
+            )
 
         result = send_email(
             client=smtp_client,

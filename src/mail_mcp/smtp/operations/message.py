@@ -1,30 +1,29 @@
 """Email Message Building Utilities"""
 
+from email.header import Header
+from email.mime.application import MIMEApplication
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.image import MIMEImage
-from email.mime.application import MIMEApplication
-from email.header import Header
-from typing import Optional, List
 
 from .. import Attachment
 
 
 def build_email_message(
     sender: str,
-    to: List[str],
+    to: list[str],
     subject: str,
-    body_text: Optional[str] = None,
-    body_html: Optional[str] = None,
-    cc: Optional[List[str]] = None,
-    bcc: Optional[List[str]] = None,
-    attachments: Optional[List[Attachment]] = None,
+    body_text: str | None = None,
+    body_html: str | None = None,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+    attachments: list[Attachment] | None = None,
 ) -> MIMEMultipart:
     """Build a basic email message.
-    
+
     This is a convenience function that wraps the more complete build_message
     from the send module.
-    
+
     Args:
         sender: Sender email address
         to: List of recipient addresses
@@ -34,7 +33,7 @@ def build_email_message(
         cc: CC recipients
         bcc: BCC recipients
         attachments: List of attachments
-        
+
     Returns:
         MIMEMultipart message object
     """
@@ -52,16 +51,16 @@ def build_email_message(
 
 def build_message(
     sender: str,
-    to: List[str],
+    to: list[str],
     subject: str,
-    body_text: Optional[str] = None,
-    body_html: Optional[str] = None,
-    cc: Optional[List[str]] = None,
-    bcc: Optional[List[str]] = None,
-    attachments: Optional[List[Attachment]] = None,
+    body_text: str | None = None,
+    body_html: str | None = None,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+    attachments: list[Attachment] | None = None,
 ) -> MIMEMultipart:
     """Build email message.
-    
+
     Args:
         sender: Sender email address
         to: List of recipient addresses
@@ -71,7 +70,7 @@ def build_message(
         cc: CC recipients
         bcc: BCC recipients
         attachments: List of attachments
-        
+
     Returns:
         MIMEMultipart message object
     """
@@ -81,32 +80,32 @@ def build_message(
         all_recipients.extend(cc)
     if bcc:
         all_recipients.extend(bcc)
-    
+
     # Create message
     msg = MIMEMultipart("mixed")
     msg["From"] = sender
     msg["To"] = ", ".join(to)
     msg["Subject"] = Header(subject, "utf-8")
-    
+
     if cc:
         msg["Cc"] = ", ".join(cc)
     if bcc:
         msg["Bcc"] = ", ".join(bcc)
-    
+
     # Add body parts
     if body_text or body_html:
         body_container = MIMEMultipart("alternative")
-        
+
         if body_text:
             text_part = MIMEText(body_text, "plain", "utf-8")
             body_container.attach(text_part)
-        
+
         if body_html:
             html_part = MIMEText(body_html, "html", "utf-8")
             body_container.attach(html_part)
-        
+
         msg.attach(body_container)
-    
+
     # Add attachments
     if attachments:
         for att in attachments:
@@ -116,7 +115,7 @@ def build_message(
                 part = MIMEApplication(att.data, name=att.filename, _subtype="pdf")
             else:
                 part = MIMEApplication(att.data, name=att.filename)
-            
+
             part.add_header(
                 "Content-Disposition",
                 "attachment",
@@ -124,24 +123,24 @@ def build_message(
             )
             part.add_header("Content-Type", att.content_type)
             msg.attach(part)
-    
+
     return msg
 
 
 def create_plain_text_message(
     sender: str,
-    to: List[str],
+    to: list[str],
     subject: str,
     body: str,
 ) -> MIMEText:
     """Create a simple plain text message.
-    
+
     Args:
         sender: Sender email address
         to: List of recipient addresses
         subject: Email subject
         body: Plain text body
-        
+
     Returns:
         MIMEText message object
     """
@@ -154,20 +153,20 @@ def create_plain_text_message(
 
 def create_html_message(
     sender: str,
-    to: List[str],
+    to: list[str],
     subject: str,
     html_body: str,
-    plain_text_fallback: Optional[str] = None,
+    plain_text_fallback: str | None = None,
 ) -> MIMEMultipart:
     """Create an HTML message with optional plain text fallback.
-    
+
     Args:
         sender: Sender email address
         to: List of recipient addresses
         subject: Email subject
         html_body: HTML body
         plain_text_fallback: Optional plain text version
-        
+
     Returns:
         MIMEMultipart message object
     """
@@ -175,10 +174,10 @@ def create_html_message(
     msg["From"] = sender
     msg["To"] = ", ".join(to)
     msg["Subject"] = Header(subject, "utf-8")
-    
+
     if plain_text_fallback:
         msg.attach(MIMEText(plain_text_fallback, "plain", "utf-8"))
-    
+
     msg.attach(MIMEText(html_body, "html", "utf-8"))
     return msg
 

@@ -8,18 +8,17 @@ Provides folder management operations including:
 - Getting folder status
 """
 
-from mail_mcp.folders.manager import (
-    FolderManager,
-    list_all_folders,
-)
-
 # Re-export from core for backwards compatibility
 from mail_mcp.core import (
-    IMAPFolderNotFound,
     IMAPFolderAlreadyExists,
     IMAPFolderCreateFailed,
     IMAPFolderDeleteFailed,
+    IMAPFolderNotFound,
     IMAPFolderRenameFailed,
+)
+from mail_mcp.folders.manager import (
+    FolderManager,
+    list_all_folders,
 )
 
 # Aliases
@@ -29,16 +28,16 @@ FolderExistsError = IMAPFolderAlreadyExists
 InvalidFolderNameError = IMAPInvalidParameterError = None  # Will use core
 
 __all__ = [
-    'FolderError',
-    'FolderNotFoundError',
-    'FolderExistsError',
-    'InvalidFolderNameError',
-    'FolderManager',
-    'list_all_folders',
+    "FolderError",
+    "FolderNotFoundError",
+    "FolderExistsError",
+    "InvalidFolderNameError",
+    "FolderManager",
+    "list_all_folders",
     # Core errors (re-exported)
-    'IMAPFolderNotFound',
-    'IMAPFolderAlreadyExists',
-    'IMAPFolderCreateFailed',
-    'IMAPFolderDeleteFailed',
-    'IMAPFolderRenameFailed',
+    "IMAPFolderNotFound",
+    "IMAPFolderAlreadyExists",
+    "IMAPFolderCreateFailed",
+    "IMAPFolderDeleteFailed",
+    "IMAPFolderRenameFailed",
 ]
