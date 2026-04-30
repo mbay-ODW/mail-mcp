@@ -13,6 +13,51 @@ from ..smtp.operations import send_email, send_forward, send_reply
 _DB_ENABLED = os.getenv("EMAIL_DB_ENABLED", "false").lower() == "true"
 
 
+def _db_search(store, criteria: str, folder: str, limit: int) -> list[dict] | None:
+    """Translate simple IMAP criteria string to a DB query.
+
+    Returns a list of result dicts, or None if the criteria can't be
+    served from the DB (caller should fall back to live IMAP).
+    """
+    import re as _re
+
+    c = criteria.strip().upper()
+
+    # --- flag / status criteria ---
+    if c == "ALL":
+        return store.list_emails(folder=folder, limit=limit)
+    if c == "UNSEEN":
+        return store.list_emails(folder=folder, limit=limit, unread_only=True)
+    if c == "SEEN":
+        rows = store.list_emails(folder=folder, limit=limit)
+        return [r for r in rows if r.get("is_read")]
+    if c == "FLAGGED":
+        rows = store.list_emails(folder=folder, limit=limit)
+        return [r for r in rows if r.get("is_flagged")]
+    if c == "UNFLAGGED":
+        rows = store.list_emails(folder=folder, limit=limit)
+        return [r for r in rows if not r.get("is_flagged")]
+
+    # --- field searches: FROM x / TO x / SUBJECT x ---
+    m = _re.match(r"^(FROM|TO|SUBJECT)\s+(.+)$", criteria.strip(), _re.IGNORECASE)
+    if m:
+        field_map = {"FROM": "from_addr", "TO": "to_addr", "SUBJECT": "subject"}
+        fts_field = field_map[m.group(1).upper()]
+        value = m.group(2).strip().strip('"')
+        # Use FTS5 field filter for precision
+        fts_query = f'{fts_field}:"{value}"'
+        results = store.search_fts(
+            fts_query, folder=folder if folder != "INBOX" else None, limit=limit
+        )
+        if folder == "INBOX":
+            results = [r for r in results if r.get("folder") == "INBOX"]
+        return results
+
+    # Criteria we don't support (DATE ranges, UID ranges, complex AND/OR, etc.)
+    # → return None so caller falls back to IMAP
+    return None
+
+
 def get_imap_tools() -> list[Tool]:
     """Get all IMAP-related tool definitions."""
     return [
@@ -562,11 +607,20 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=str(result))]
 
     elif name == "search_emails":
-        result = client.search_emails(
-            folder=arguments.get("folder", "INBOX"),
-            criteria=arguments.get("criteria", "ALL"),
-            limit=arguments.get("limit", 10),
-        )
+        folder = arguments.get("folder", "INBOX")
+        criteria = arguments.get("criteria", "ALL")
+        limit = arguments.get("limit", 10)
+
+        # DB-first: when cache is enabled, translate simple IMAP criteria to DB queries.
+        # Falls back to live IMAP for criteria we can't translate.
+        if _DB_ENABLED:
+            store = get_email_store()
+            db_result = _db_search(store, criteria, folder, limit) if store else None
+            if db_result is not None:
+                return [TextContent(type="text", text=str(db_result))]
+            # Unsupported criteria – fall through to IMAP below
+
+        result = client.search_emails(folder=folder, criteria=criteria, limit=limit)
         return [TextContent(type="text", text=str(result))]
 
     elif name == "get_email":
