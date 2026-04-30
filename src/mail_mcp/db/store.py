@@ -8,6 +8,7 @@ Schema:
   emails_fts      – FTS5 virtual table over emails
 """
 
+import base64
 import logging
 import sqlite3
 import threading
@@ -311,6 +312,52 @@ class EmailStore:
             .fetchall()
         )
         return [dict(r) for r in rows]
+
+    def get_attachment_by_uid(
+        self,
+        folder: str,
+        uid: int,
+        filename: str | None = None,
+    ) -> dict | None:
+        """Return attachment with binary data for a given email UID.
+
+        If *filename* is provided, returns the matching attachment.
+        Otherwise returns the first attachment found.
+        Returns None when the email or attachment is not in the DB
+        (caller should fall back to live IMAP).
+        """
+        conn = self._conn()
+        email_row = conn.execute(
+            "SELECT id FROM emails WHERE folder=? AND uid=?", (folder, uid)
+        ).fetchone()
+        if not email_row:
+            return None
+        email_id = email_row["id"]
+
+        if filename:
+            row = conn.execute(
+                "SELECT id, filename, content_type, size, data "
+                "FROM attachments WHERE email_id=? AND filename=?",
+                (email_id, filename),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, filename, content_type, size, data "
+                "FROM attachments WHERE email_id=? LIMIT 1",
+                (email_id,),
+            ).fetchone()
+
+        if row is None or row["data"] is None:
+            # Row exists but binary data not yet synced → fall back to IMAP
+            return None
+
+        return {
+            "uid": str(uid),
+            "filename": row["filename"],
+            "content_type": row["content_type"],
+            "size": row["size"],
+            "data_base64": base64.b64encode(row["data"]).decode("ascii"),
+        }
 
     def list_emails(
         self,

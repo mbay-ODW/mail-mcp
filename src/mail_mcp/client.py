@@ -1,5 +1,6 @@
 """IMAP Client module with connection management."""
 
+import base64
 import email
 import imaplib
 import re
@@ -229,6 +230,7 @@ class IMAPClient:
         message_id: str | None = None,
         uid: str | None = None,
         include_body: bool = True,
+        include_attachment_data: bool = False,
     ) -> dict[str, Any]:
         """Get email details by message ID or UID."""
         conn = self._ensure_connected()
@@ -284,18 +286,69 @@ class IMAPClient:
                         elif content_type == "text/html" and not result["body_html"]:
                             result["body_html"] = self._get_part_content(part)
                         if part.get_content_disposition() == "attachment":
-                            result["attachments"].append(
-                                {
-                                    "filename": part.get_filename() or "unknown",
-                                    "content_type": content_type,
-                                }
-                            )
+                            att: dict[str, Any] = {
+                                "filename": part.get_filename() or "unknown",
+                                "content_type": content_type,
+                            }
+                            if include_attachment_data:
+                                raw = part.get_payload(decode=True)
+                                if raw is not None:
+                                    att["size"] = len(raw)
+                                    att["data"] = raw
+                            result["attachments"].append(att)
                 else:
                     result["body_text"] = self._get_part_content(msg)
 
             return result
 
         raise Exception("Failed to parse email")
+
+    def get_attachment(
+        self,
+        folder: str = "INBOX",
+        uid: str | None = None,
+        filename: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch a specific attachment from an email by UID and filename.
+
+        Returns a dict with filename, content_type, size (bytes), and
+        data_base64 (base64-encoded binary content).
+        """
+        conn = self._ensure_connected()
+        conn.select(folder)
+
+        if not uid:
+            raise ValueError("uid is required for get_attachment")
+
+        status, msg_data = conn.uid("FETCH", str(uid), "(BODY.PEEK[])")
+        self._check_status(status, msg_data, "Failed to fetch email for attachment")
+
+        raw_item = next((item for item in msg_data if isinstance(item, tuple)), None)
+        if raw_item is None:
+            raise Exception(f"Email UID {uid} not found")
+
+        msg = email.message_from_bytes(raw_item[1], policy=default)
+
+        for part in msg.walk():
+            part_filename = part.get_filename()
+            if part_filename is None:
+                continue
+            # Match by filename if provided; return first attachment otherwise
+            if filename is not None and part_filename != filename:
+                continue
+            raw = part.get_payload(decode=True)
+            if raw is None:
+                continue
+            return {
+                "uid": uid,
+                "filename": part_filename,
+                "content_type": part.get_content_type(),
+                "size": len(raw),
+                "data_base64": base64.b64encode(raw).decode("ascii"),
+            }
+
+        target = f"'{filename}'" if filename else "any attachment"
+        raise Exception(f"No attachment {target} found in email UID {uid}")
 
     def _get_uid(self, msg_data: Any) -> str | None:
         """Extract UID from message data."""

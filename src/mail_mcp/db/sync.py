@@ -113,7 +113,12 @@ class EmailSyncer:
                     continue
 
                 try:
-                    full = client.get_email(folder=folder, uid=str(uid), include_body=True)
+                    full = client.get_email(
+                        folder=folder,
+                        uid=str(uid),
+                        include_body=True,
+                        include_attachment_data=True,
+                    )
                     if not full:
                         continue
 
@@ -121,13 +126,13 @@ class EmailSyncer:
                     is_read = any(f.lower() in ("\\seen", "seen") for f in flags)
                     is_flagged = any(f.lower() in ("\\flagged", "flagged") for f in flags)
 
-                    # Attachment metadata only (no binary to keep DB lean)
+                    # Store attachment binary data in the DB
                     att_meta = [
                         {
                             "filename": a.get("filename"),
                             "content_type": a.get("content_type"),
                             "size": a.get("size"),
-                            "data": None,
+                            "data": a.get("data"),  # bytes, stored as BLOB
                         }
                         for a in full.get("attachments", [])
                     ]

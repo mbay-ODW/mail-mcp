@@ -368,6 +368,36 @@ def get_imap_tools() -> list[Tool]:
                 "properties": {},
             },
         ),
+        Tool(
+            name="get_attachment",
+            description=(
+                "Fetch an email attachment as base64-encoded binary data. "
+                "Use get_email first to obtain the UID and attachment filenames, "
+                "then call this tool to retrieve the actual file content."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder containing the email (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "uid": {
+                        "type": "string",
+                        "description": "Unique ID (UID) of the email",
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": (
+                            "Exact filename of the attachment to retrieve. "
+                            "If omitted, the first attachment in the email is returned."
+                        ),
+                    },
+                },
+                "required": ["uid"],
+            },
+        ),
     ]
 
 
@@ -692,6 +722,30 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
 
     elif name == "get_current_date":
         result = client.get_current_date()
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "get_attachment":
+        folder = arguments.get("folder", "INBOX")
+        uid = arguments.get("uid")
+        filename = arguments.get("filename")
+
+        # DB-first: serve from local cache when available
+        if _DB_ENABLED:
+            store = get_email_store()
+            if store and uid:
+                try:
+                    db_result = store.get_attachment_by_uid(
+                        folder=folder,
+                        uid=int(uid),
+                        filename=filename,
+                    )
+                    if db_result is not None:
+                        return [TextContent(type="text", text=str(db_result))]
+                except Exception:
+                    pass  # Fall back to live IMAP
+
+        # Live IMAP fallback
+        result = client.get_attachment(folder=folder, uid=uid, filename=filename)
         return [TextContent(type="text", text=str(result))]
 
     # ------------------------------------------------------------------
