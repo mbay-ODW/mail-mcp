@@ -234,7 +234,11 @@ class IMAPClient:
         conn = self._ensure_connected()
         conn.select(folder)
 
-        fetch_spec = "(UID FLAGS ENVELOPE BODY)" if include_body else "(UID FLAGS ENVELOPE)"
+        # BODY.PEEK[] fetches the full raw RFC822 message without marking as read.
+        # BODY[] (without PEEK) would mark the message as seen.
+        # Avoid ENVELOPE + BODY (no brackets) – those return parsed/structural data
+        # that cannot be passed directly to email.message_from_bytes().
+        fetch_spec = "(UID FLAGS BODY.PEEK[])" if include_body else "(UID FLAGS BODY.PEEK[HEADER])"
 
         if uid:
             # UID FETCH requires conn.uid('FETCH', ...) – conn.fetch("UID x", ...) is invalid
@@ -247,7 +251,13 @@ class IMAPClient:
         if not msg_data or not msg_data[0]:
             raise Exception("Email not found")
 
-        envelope = msg_data[0]
+        # msg_data is a list; each multi-part response item is a tuple
+        # (b'seqno (UID x FLAGS (...) BODY[] {size}', b'<raw bytes>')
+        raw_item = next((item for item in msg_data if isinstance(item, tuple)), None)
+        if raw_item is None:
+            raise Exception("Email not found")
+
+        envelope = raw_item
         if isinstance(envelope, tuple):
             msg = email.message_from_bytes(envelope[1], policy=default)
 
