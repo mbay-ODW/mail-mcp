@@ -50,6 +50,7 @@ async def call_tool(name: str, arguments: dict) -> list:
 # SSE Transport with OIDC Introspection (Traefik + Authelia)
 # ---------------------------------------------------------------------------
 
+
 def _run_sse() -> None:
     import httpx
     import uvicorn
@@ -71,7 +72,12 @@ def _run_sse() -> None:
         if auth == f"Bearer {mcp_api_key}":
             logging.info("Auth OK: statischer Bearer Token")
             return True
-        if auth.startswith("Bearer ") and oidc_introspection_url and oidc_client_id and oidc_client_secret:
+        if (
+            auth.startswith("Bearer ")
+            and oidc_introspection_url
+            and oidc_client_id
+            and oidc_client_secret
+        ):
             jwt_token = auth[7:]
             try:
                 async with httpx.AsyncClient() as client:
@@ -112,6 +118,7 @@ def _run_sse() -> None:
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
+
 
 async def _main_stdio():
     async with stdio_server() as (read_stream, write_stream):
