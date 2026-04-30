@@ -1,7 +1,7 @@
 """Configuration module for IMAP MCP Server."""
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

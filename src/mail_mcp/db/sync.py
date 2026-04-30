@@ -7,7 +7,6 @@ Subsequently: fetches only emails with UID > last known UID (incremental).
 
 import logging
 import threading
-import time
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -36,9 +35,7 @@ class EmailSyncer:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="email-syncer"
-        )
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="email-syncer")
         self._thread.start()
         logging.info(
             "EmailSyncer started (interval=%ds, initial_days=%d)",
@@ -89,17 +86,13 @@ class EmailSyncer:
 
             if last_uid == 0:
                 # Initial sync – fetch last N days
-                since = (datetime.now() - timedelta(days=self._sync_days)).strftime(
-                    "%d-%b-%Y"
-                )
+                since = (datetime.now() - timedelta(days=self._sync_days)).strftime("%d-%b-%Y")
                 criteria = f"SINCE {since}"
             else:
                 # Incremental – UID greater than last seen
                 criteria = f"UID {last_uid + 1}:*"
 
-            summaries = client.search_emails(
-                folder=folder, criteria=criteria, limit=500
-            )
+            summaries = client.search_emails(folder=folder, criteria=criteria, limit=500)
             if not summaries:
                 return
 
@@ -120,19 +113,13 @@ class EmailSyncer:
                     continue
 
                 try:
-                    full = client.get_email(
-                        folder=folder, uid=str(uid), include_body=True
-                    )
+                    full = client.get_email(folder=folder, uid=str(uid), include_body=True)
                     if not full:
                         continue
 
                     flags = full.get("flags", [])
-                    is_read = any(
-                        f.lower() in ("\\seen", "seen") for f in flags
-                    )
-                    is_flagged = any(
-                        f.lower() in ("\\flagged", "flagged") for f in flags
-                    )
+                    is_read = any(f.lower() in ("\\seen", "seen") for f in flags)
+                    is_flagged = any(f.lower() in ("\\flagged", "flagged") for f in flags)
 
                     # Attachment metadata only (no binary to keep DB lean)
                     att_meta = [
@@ -165,9 +152,7 @@ class EmailSyncer:
                     synced += 1
 
                 except Exception as exc:
-                    logging.warning(
-                        "EmailSyncer: skipped uid=%s folder=%s – %s", uid, folder, exc
-                    )
+                    logging.warning("EmailSyncer: skipped uid=%s folder=%s – %s", uid, folder, exc)
 
             if new_last_uid > last_uid:
                 self._store.update_sync_state(folder, new_last_uid)

@@ -166,9 +166,20 @@ class EmailStore:
                 synced_at        = excluded.synced_at
             """,
             (
-                folder, uid, message_id, subject, from_addr, to_addr, cc_addr,
-                date_str, body_text, body_html, has_attachments,
-                int(is_read), int(is_flagged), now,
+                folder,
+                uid,
+                message_id,
+                subject,
+                from_addr,
+                to_addr,
+                cc_addr,
+                date_str,
+                body_text,
+                body_html,
+                has_attachments,
+                int(is_read),
+                int(is_flagged),
+                now,
             ),
         )
         email_id: int = cursor.lastrowid or 0
@@ -218,9 +229,11 @@ class EmailStore:
     # ------------------------------------------------------------------
 
     def get_last_uid(self, folder: str) -> int:
-        row = self._conn().execute(
-            "SELECT last_uid FROM sync_state WHERE folder=?", (folder,)
-        ).fetchone()
+        row = (
+            self._conn()
+            .execute("SELECT last_uid FROM sync_state WHERE folder=?", (folder,))
+            .fetchone()
+        )
         return int(row["last_uid"]) if row else 0
 
     def search_fts(
@@ -231,8 +244,10 @@ class EmailStore:
     ) -> list[dict]:
         """Full-text search via FTS5. Returns matching email rows."""
         if folder:
-            rows = self._conn().execute(
-                """
+            rows = (
+                self._conn()
+                .execute(
+                    """
                 SELECT e.*,
                        snippet(emails_fts, 4, '**', '**', '...', 15) AS snippet
                 FROM   emails_fts
@@ -242,11 +257,15 @@ class EmailStore:
                 ORDER BY rank
                 LIMIT ?
                 """,
-                (query, folder, limit),
-            ).fetchall()
+                    (query, folder, limit),
+                )
+                .fetchall()
+            )
         else:
-            rows = self._conn().execute(
-                """
+            rows = (
+                self._conn()
+                .execute(
+                    """
                 SELECT e.*,
                        snippet(emails_fts, 4, '**', '**', '...', 15) AS snippet
                 FROM   emails_fts
@@ -255,8 +274,10 @@ class EmailStore:
                 ORDER BY rank
                 LIMIT ?
                 """,
-                (query, limit),
-            ).fetchall()
+                    (query, limit),
+                )
+                .fetchall()
+            )
         return [dict(r) for r in rows]
 
     def get_stats(self) -> dict:
@@ -266,9 +287,7 @@ class EmailStore:
         by_folder = conn.execute(
             "SELECT folder, COUNT(*) AS cnt FROM emails GROUP BY folder"
         ).fetchall()
-        sync_states = conn.execute(
-            "SELECT folder, last_uid, synced_at FROM sync_state"
-        ).fetchall()
+        sync_states = conn.execute("SELECT folder, last_uid, synced_at FROM sync_state").fetchall()
         total_att = conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0]
         return {
             "total_emails": total,
@@ -278,17 +297,19 @@ class EmailStore:
         }
 
     def get_email_by_db_id(self, email_id: int) -> dict | None:
-        row = self._conn().execute(
-            "SELECT * FROM emails WHERE id=?", (email_id,)
-        ).fetchone()
+        row = self._conn().execute("SELECT * FROM emails WHERE id=?", (email_id,)).fetchone()
         return dict(row) if row else None
 
     def get_attachments_meta(self, email_id: int) -> list[dict]:
         """Attachment metadata (no binary data)."""
-        rows = self._conn().execute(
-            "SELECT id, filename, content_type, size FROM attachments WHERE email_id=?",
-            (email_id,),
-        ).fetchall()
+        rows = (
+            self._conn()
+            .execute(
+                "SELECT id, filename, content_type, size FROM attachments WHERE email_id=?",
+                (email_id,),
+            )
+            .fetchall()
+        )
         return [dict(r) for r in rows]
 
     def list_emails(
@@ -307,10 +328,14 @@ class EmailStore:
             where.append("is_read=0")
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         params += [limit, offset]
-        rows = self._conn().execute(
-            f"SELECT id, folder, uid, subject, from_addr, to_addr, date_str, "
-            f"is_read, is_flagged, has_attachments "
-            f"FROM emails {clause} ORDER BY uid DESC LIMIT ? OFFSET ?",
-            params,
-        ).fetchall()
+        rows = (
+            self._conn()
+            .execute(
+                f"SELECT id, folder, uid, subject, from_addr, to_addr, date_str, "
+                f"is_read, is_flagged, has_attachments "
+                f"FROM emails {clause} ORDER BY uid DESC LIMIT ? OFFSET ?",
+                params,
+            )
+            .fetchall()
+        )
         return [dict(r) for r in rows]
