@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 
 # Create MCP Server
-app = Server("mail-geb-mcp")
+app = Server("mail-mcp")
 
 
 @app.list_tools()
@@ -111,7 +111,7 @@ def _run_sse() -> None:
     )
 
     port = int(os.getenv("PORT", "8000"))
-    logging.info("Starting mail-geb-mcp SSE server on port %d", port)
+    logging.info("Starting mail-mcp SSE server on port %d", port)
     uvicorn.run(starlette_app, host="0.0.0.0", port=port)
 
 

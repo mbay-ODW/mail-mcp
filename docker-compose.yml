@@ -1,6 +1,6 @@
 services:
   mail-geb-mcp:
-    image: ghcr.io/mbay-odw/mail-geb-mcp:latest
+    image: ghcr.io/mbay-odw/mail-mcp:latest
     container_name: mail-geb-mcp
     restart: unless-stopped
     environment:
