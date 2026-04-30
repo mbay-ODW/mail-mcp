@@ -51,6 +51,30 @@ async def call_tool(name: str, arguments: dict) -> list:
 # ---------------------------------------------------------------------------
 
 
+def _start_db_syncer() -> None:
+    """Initialise SQLite store and start background sync if EMAIL_DB_ENABLED=true."""
+    from .config import DBConfig
+    from .db import EmailSyncer, init_email_store
+
+    cfg = DBConfig.from_env()
+    if not cfg.enabled:
+        return
+
+    store = init_email_store(cfg.path)
+    syncer = EmailSyncer(
+        store=store,
+        sync_interval=cfg.sync_interval,
+        sync_days=cfg.sync_days,
+    )
+    syncer.start()
+    logging.info(
+        "Email DB enabled: path=%s interval=%ds days=%d",
+        cfg.path,
+        cfg.sync_interval,
+        cfg.sync_days,
+    )
+
+
 def _run_sse() -> None:
     import httpx
     import uvicorn
@@ -59,6 +83,8 @@ def _run_sse() -> None:
     from starlette.requests import Request
     from starlette.responses import Response
     from starlette.routing import Mount, Route
+
+    _start_db_syncer()
 
     mcp_api_key = os.getenv("MCP_API_KEY", "")
     oidc_introspection_url = os.getenv("OIDC_INTROSPECTION_URL", "")
@@ -69,7 +95,7 @@ def _run_sse() -> None:
         if not mcp_api_key:
             return True
         auth = request.headers.get("Authorization", "")
-        logging.info(
+        logging.debug(
             "Auth check: has_auth=%s starts_bearer=%s has_introspection_url=%s has_client_id=%s has_client_secret=%s",
             bool(auth),
             auth.startswith("Bearer "),
@@ -95,7 +121,7 @@ def _run_sse() -> None:
                         auth=(oidc_client_id, oidc_client_secret),
                         timeout=5.0,
                     )
-                    logging.info(
+                    logging.debug(
                         "Introspection HTTP %s body=%s",
                         resp.status_code,
                         resp.text[:500],

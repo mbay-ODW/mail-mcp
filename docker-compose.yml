@@ -23,6 +23,13 @@ services:
       - OIDC_INTROSPECTION_URL=https://mail-geb-mcp.bay-ram.de/api/oidc/introspection
       - OIDC_CLIENT_ID=mail-geb-mcp
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      # Local email DB (SQLite + FTS5)
+      - EMAIL_DB_ENABLED=${EMAIL_DB_ENABLED:-false}
+      - EMAIL_DB_PATH=/data/mail.db
+      - EMAIL_DB_SYNC_INTERVAL=${EMAIL_DB_SYNC_INTERVAL:-300}
+      - EMAIL_DB_SYNC_DAYS=${EMAIL_DB_SYNC_DAYS:-90}
+    volumes:
+      - mail-geb-db:/data
     expose:
       - "8000"
     labels:
@@ -43,6 +50,9 @@ services:
       - "traefik.http.services.mail-geb-mcp-svc.loadbalancer.server.port=8000"
     networks:
       - traefik
+
+volumes:
+  mail-geb-db:
 
 networks:
   traefik:

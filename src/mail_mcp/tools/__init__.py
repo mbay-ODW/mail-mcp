@@ -1,12 +1,16 @@
 """MCP Tools definitions and handlers for IMAP operations."""
 
 import base64
+import os
 
 from mcp.types import TextContent, Tool
 
 from ..client import get_imap_client
+from ..db import get_email_store
 from ..smtp import Attachment, get_smtp_client
 from ..smtp.operations import send_email, send_forward, send_reply
+
+_DB_ENABLED = os.getenv("EMAIL_DB_ENABLED", "false").lower() == "true"
 
 
 def get_imap_tools() -> list[Tool]:
@@ -448,9 +452,93 @@ def get_smtp_tools() -> list[Tool]:
     ]
 
 
+def get_db_tools() -> list[Tool]:
+    """Get DB-backed tool definitions (only exposed when EMAIL_DB_ENABLED=true)."""
+    return [
+        Tool(
+            name="db_search_emails",
+            description=(
+                "Full-text search across all locally cached emails (subject, sender, "
+                "recipient, body). Much faster than IMAP search and works across all "
+                "folders simultaneously. Requires EMAIL_DB_ENABLED=true."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "FTS5 search query. Supports: plain words, "
+                            '"exact phrase", field:value (subject:, from_addr:, body_text:), '
+                            "AND / OR / NOT operators."
+                        ),
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "Restrict search to a specific folder (optional)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default: 20)",
+                        "default": 20,
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="db_list_emails",
+            description=(
+                "List emails from the local cache, newest first. "
+                "Faster than search_emails for browsing. "
+                "Requires EMAIL_DB_ENABLED=true."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder to list (optional – all folders if omitted)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of emails to return (default: 50)",
+                        "default": 50,
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Pagination offset (default: 0)",
+                        "default": 0,
+                    },
+                    "unread_only": {
+                        "type": "boolean",
+                        "description": "Only return unread emails (default: false)",
+                        "default": False,
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="db_sync_status",
+            description=(
+                "Show the status of the local email cache: total email count, "
+                "per-folder breakdown, and last sync timestamps. "
+                "Requires EMAIL_DB_ENABLED=true."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+    ]
+
+
 def get_all_tools() -> list[Tool]:
     """Get all tool definitions."""
-    return get_imap_tools() + get_smtp_tools()
+    tools = get_imap_tools() + get_smtp_tools()
+    if _DB_ENABLED:
+        tools += get_db_tools()
+    return tools
 
 
 async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
@@ -551,6 +639,44 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
     elif name == "get_current_date":
         result = client.get_current_date()
         return [TextContent(type="text", text=str(result))]
+
+    # ------------------------------------------------------------------
+    # DB-backed tools (only active when EMAIL_DB_ENABLED=true)
+    # ------------------------------------------------------------------
+
+    elif name == "db_search_emails":
+        store = get_email_store()
+        if store is None:
+            return [TextContent(type="text", text="Error: EMAIL_DB_ENABLED is not set to true.")]
+        results = store.search_fts(
+            query=arguments["query"],
+            folder=arguments.get("folder"),
+            limit=arguments.get("limit", 20),
+        )
+        # Strip large body_html from results to keep output readable
+        for r in results:
+            r.pop("body_html", None)
+            body = r.get("body_text") or ""
+            r["body_text"] = body[:500] + "…" if len(body) > 500 else body
+        return [TextContent(type="text", text=str(results))]
+
+    elif name == "db_list_emails":
+        store = get_email_store()
+        if store is None:
+            return [TextContent(type="text", text="Error: EMAIL_DB_ENABLED is not set to true.")]
+        results = store.list_emails(
+            folder=arguments.get("folder"),
+            limit=arguments.get("limit", 50),
+            offset=arguments.get("offset", 0),
+            unread_only=arguments.get("unread_only", False),
+        )
+        return [TextContent(type="text", text=str(results))]
+
+    elif name == "db_sync_status":
+        store = get_email_store()
+        if store is None:
+            return [TextContent(type="text", text="Error: EMAIL_DB_ENABLED is not set to true.")]
+        return [TextContent(type="text", text=str(store.get_stats()))]
 
     return None  # Not an IMAP tool
 
