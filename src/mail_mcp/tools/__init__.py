@@ -6,11 +6,14 @@ import os
 from mcp.types import TextContent, Tool
 
 from ..client import get_imap_client
+from ..config import TransferConfig
 from ..db import get_email_store
 from ..smtp import Attachment, get_smtp_client
 from ..smtp.operations import send_email, send_forward, send_reply
 
 _DB_ENABLED = os.getenv("EMAIL_DB_ENABLED", "false").lower() == "true"
+_transfer_cfg = TransferConfig.from_env()
+_ATTACHMENT_MAX_BYTES = _transfer_cfg.attachment_max_size_kb * 1024
 
 
 def _db_search(store, criteria: str, folder: str, limit: int) -> list[dict] | None:
@@ -56,6 +59,97 @@ def _db_search(store, criteria: str, folder: str, limit: int) -> list[dict] | No
     # Criteria we don't support (DATE ranges, UID ranges, complex AND/OR, etc.)
     # → return None so caller falls back to IMAP
     return None
+
+
+def get_transfer_tools() -> list[Tool]:
+    """Get transfer tool definitions (only when external services are configured)."""
+    tools = []
+    if _transfer_cfg.paperless_enabled:
+        tools.append(
+            Tool(
+                name="transfer_to_paperless",
+                description=(
+                    "Fetch an email attachment directly from IMAP and upload it to "
+                    "Paperless-ngx – no binary data passes through Claude's context. "
+                    "Returns the Paperless task ID."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "folder": {
+                            "type": "string",
+                            "description": "Folder containing the email (default: INBOX)",
+                            "default": "INBOX",
+                        },
+                        "uid": {
+                            "type": "string",
+                            "description": "Unique ID (UID) of the email",
+                        },
+                        "filename": {
+                            "type": "string",
+                            "description": "Attachment filename. Omit to use the first attachment.",
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Document title in Paperless (default: filename)",
+                        },
+                        "correspondent_id": {
+                            "type": "integer",
+                            "description": "Paperless correspondent ID (optional)",
+                        },
+                        "document_type_id": {
+                            "type": "integer",
+                            "description": "Paperless document type ID (optional)",
+                        },
+                        "tag_ids": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "description": "List of Paperless tag IDs (optional)",
+                        },
+                    },
+                    "required": ["uid"],
+                },
+            )
+        )
+    if _transfer_cfg.hero_enabled:
+        tools.append(
+            Tool(
+                name="transfer_to_hero",
+                description=(
+                    "Fetch an email attachment directly from IMAP and upload it to a "
+                    "HERO project's document storage – no binary data passes through "
+                    "Claude's context. Returns the HERO document ID."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "folder": {
+                            "type": "string",
+                            "description": "Folder containing the email (default: INBOX)",
+                            "default": "INBOX",
+                        },
+                        "uid": {
+                            "type": "string",
+                            "description": "Unique ID (UID) of the email",
+                        },
+                        "filename": {
+                            "type": "string",
+                            "description": "Attachment filename. Omit to use the first attachment.",
+                        },
+                        "project_id": {
+                            "type": "string",
+                            "description": "HERO project ID",
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Document category (optional)",
+                        },
+                    },
+                    "required": ["uid", "project_id"],
+                },
+            )
+        )
+    return tools
 
 
 def get_imap_tools() -> list[Tool]:
@@ -371,9 +465,11 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="get_attachment",
             description=(
-                "Fetch an email attachment as base64-encoded binary data. "
-                "Use get_email first to obtain the UID and attachment filenames, "
-                "then call this tool to retrieve the actual file content."
+                "Fetch attachment metadata (filename, content_type, size). "
+                "By default returns metadata only – no binary data – to avoid "
+                "filling the context window. Set include_data=true only for small "
+                f"files (≤ {_transfer_cfg.attachment_max_size_kb} KB). "
+                "For larger files use transfer_to_paperless or transfer_to_hero."
             ),
             inputSchema={
                 "type": "object",
@@ -390,9 +486,18 @@ def get_imap_tools() -> list[Tool]:
                     "filename": {
                         "type": "string",
                         "description": (
-                            "Exact filename of the attachment to retrieve. "
-                            "If omitted, the first attachment in the email is returned."
+                            "Exact filename of the attachment. "
+                            "If omitted, the first attachment is returned."
                         ),
+                    },
+                    "include_data": {
+                        "type": "boolean",
+                        "description": (
+                            f"Return base64-encoded content (only for files ≤ "
+                            f"{_transfer_cfg.attachment_max_size_kb} KB). "
+                            "Default: false."
+                        ),
+                        "default": False,
                     },
                 },
                 "required": ["uid"],
@@ -613,6 +718,7 @@ def get_all_tools() -> list[Tool]:
     tools = get_imap_tools() + get_smtp_tools()
     if _DB_ENABLED:
         tools += get_db_tools()
+    tools += get_transfer_tools()
     return tools
 
 
@@ -728,6 +834,7 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
         folder = arguments.get("folder", "INBOX")
         uid = arguments.get("uid")
         filename = arguments.get("filename")
+        include_data = arguments.get("include_data", False)
 
         # DB-first: serve from local cache when available
         if _DB_ENABLED:
@@ -738,6 +845,8 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
                         folder=folder,
                         uid=int(uid),
                         filename=filename,
+                        include_data=include_data,
+                        max_size_bytes=_ATTACHMENT_MAX_BYTES,
                     )
                     if db_result is not None:
                         return [TextContent(type="text", text=str(db_result))]
@@ -745,7 +854,90 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
                     pass  # Fall back to live IMAP
 
         # Live IMAP fallback
-        result = client.get_attachment(folder=folder, uid=uid, filename=filename)
+        result = client.get_attachment(
+            folder=folder,
+            uid=uid,
+            filename=filename,
+            include_data=include_data,
+            max_size_bytes=_ATTACHMENT_MAX_BYTES,
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "transfer_to_paperless":
+        from ..transfer import upload_to_paperless
+
+        folder = arguments.get("folder", "INBOX")
+        uid = arguments.get("uid")
+        filename = arguments.get("filename")
+
+        # DB-first for bytes
+        raw_data: bytes | None = None
+        actual_filename = filename or "attachment"
+        actual_content_type = "application/octet-stream"
+
+        if _DB_ENABLED:
+            store = get_email_store()
+            if store and uid:
+                try:
+                    db_bytes = store.get_attachment_bytes_by_uid(
+                        folder=folder, uid=int(uid), filename=filename
+                    )
+                    if db_bytes:
+                        raw_data, actual_filename, actual_content_type = db_bytes
+                except Exception:
+                    pass
+
+        if raw_data is None:
+            raw_data, actual_filename, actual_content_type = client.get_attachment_bytes(
+                folder=folder, uid=uid, filename=filename
+            )
+
+        result = await upload_to_paperless(
+            data=raw_data,
+            filename=actual_filename,
+            content_type=actual_content_type,
+            title=arguments.get("title"),
+            correspondent_id=arguments.get("correspondent_id"),
+            document_type_id=arguments.get("document_type_id"),
+            tag_ids=arguments.get("tag_ids"),
+        )
+        return [TextContent(type="text", text=str(result))]
+
+    elif name == "transfer_to_hero":
+        from ..transfer import upload_to_hero
+
+        folder = arguments.get("folder", "INBOX")
+        uid = arguments.get("uid")
+        filename = arguments.get("filename")
+
+        raw_data = None
+        actual_filename = filename or "attachment"
+        actual_content_type = "application/octet-stream"
+
+        if _DB_ENABLED:
+            store = get_email_store()
+            if store and uid:
+                try:
+                    db_bytes = store.get_attachment_bytes_by_uid(
+                        folder=folder, uid=int(uid), filename=filename
+                    )
+                    if db_bytes:
+                        raw_data, actual_filename, actual_content_type = db_bytes
+                except Exception:
+                    pass
+
+        if raw_data is None:
+            raw_data, actual_filename, actual_content_type = client.get_attachment_bytes(
+                folder=folder, uid=uid, filename=filename
+            )
+
+        result = await upload_to_hero(
+            data=raw_data,
+            filename=actual_filename,
+            content_type=actual_content_type,
+            project_id=arguments["project_id"],
+            category=arguments.get("category"),
+        )
         return [TextContent(type="text", text=str(result))]
 
     # ------------------------------------------------------------------

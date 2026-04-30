@@ -318,13 +318,14 @@ class EmailStore:
         folder: str,
         uid: int,
         filename: str | None = None,
+        include_data: bool = False,
+        max_size_bytes: int = 51200,
     ) -> dict | None:
-        """Return attachment with binary data for a given email UID.
+        """Return attachment metadata (and optionally binary data) for a UID.
 
-        If *filename* is provided, returns the matching attachment.
-        Otherwise returns the first attachment found.
         Returns None when the email or attachment is not in the DB
         (caller should fall back to live IMAP).
+        Set include_data=True to include base64 content (capped at max_size_bytes).
         """
         conn = self._conn()
         email_row = conn.execute(
@@ -347,17 +348,66 @@ class EmailStore:
                 (email_id,),
             ).fetchone()
 
-        if row is None or row["data"] is None:
-            # Row exists but binary data not yet synced → fall back to IMAP
+        if row is None:
             return None
 
-        return {
+        result: dict = {
             "uid": str(uid),
             "filename": row["filename"],
             "content_type": row["content_type"],
             "size": row["size"],
-            "data_base64": base64.b64encode(row["data"]).decode("ascii"),
         }
+
+        if include_data:
+            raw = row["data"]
+            if raw is None:
+                # Not yet synced to DB
+                return None  # → caller falls back to live IMAP
+            if len(raw) <= max_size_bytes:
+                result["data_base64"] = base64.b64encode(raw).decode("ascii")
+            else:
+                result["data_base64"] = None
+                result["warning"] = (
+                    f"File too large ({len(raw) // 1024} KB > "
+                    f"{max_size_bytes // 1024} KB limit). "
+                    "Use transfer_to_paperless or transfer_to_hero instead."
+                )
+
+        return result
+
+    def get_attachment_bytes_by_uid(
+        self,
+        folder: str,
+        uid: int,
+        filename: str | None = None,
+    ) -> tuple[bytes, str, str] | None:
+        """Return raw (data, filename, content_type) for server-side transfer.
+
+        Returns None if not in DB (caller should fetch from IMAP).
+        """
+        conn = self._conn()
+        email_row = conn.execute(
+            "SELECT id FROM emails WHERE folder=? AND uid=?", (folder, uid)
+        ).fetchone()
+        if not email_row:
+            return None
+
+        email_id = email_row["id"]
+        if filename:
+            row = conn.execute(
+                "SELECT filename, content_type, data FROM attachments "
+                "WHERE email_id=? AND filename=?",
+                (email_id, filename),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT filename, content_type, data FROM attachments WHERE email_id=? LIMIT 1",
+                (email_id,),
+            ).fetchone()
+
+        if row is None or row["data"] is None:
+            return None
+        return row["data"], row["filename"], row["content_type"]
 
     def list_emails(
         self,

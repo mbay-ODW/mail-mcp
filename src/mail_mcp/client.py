@@ -308,11 +308,16 @@ class IMAPClient:
         folder: str = "INBOX",
         uid: str | None = None,
         filename: str | None = None,
+        include_data: bool = False,
+        max_size_bytes: int = 51200,
     ) -> dict[str, Any]:
-        """Fetch a specific attachment from an email by UID and filename.
+        """Fetch attachment metadata (and optionally binary data) from an email.
 
-        Returns a dict with filename, content_type, size (bytes), and
-        data_base64 (base64-encoded binary content).
+        By default returns only metadata (filename, content_type, size).
+        Set include_data=True to also receive base64-encoded content, but only
+        when the file is ≤ max_size_bytes (default 50 KB) to avoid overflowing
+        Claude's context window.  For larger files use transfer_to_paperless /
+        transfer_to_hero instead.
         """
         conn = self._ensure_connected()
         conn.select(folder)
@@ -333,19 +338,68 @@ class IMAPClient:
             part_filename = part.get_filename()
             if part_filename is None:
                 continue
-            # Match by filename if provided; return first attachment otherwise
             if filename is not None and part_filename != filename:
                 continue
             raw = part.get_payload(decode=True)
             if raw is None:
                 continue
-            return {
+
+            result: dict[str, Any] = {
                 "uid": uid,
                 "filename": part_filename,
                 "content_type": part.get_content_type(),
                 "size": len(raw),
-                "data_base64": base64.b64encode(raw).decode("ascii"),
             }
+
+            if include_data:
+                if len(raw) <= max_size_bytes:
+                    result["data_base64"] = base64.b64encode(raw).decode("ascii")
+                else:
+                    result["data_base64"] = None
+                    result["warning"] = (
+                        f"File too large ({len(raw) // 1024} KB > "
+                        f"{max_size_bytes // 1024} KB limit). "
+                        "Use transfer_to_paperless or transfer_to_hero instead."
+                    )
+            return result
+
+        target = f"'{filename}'" if filename else "any attachment"
+        raise Exception(f"No attachment {target} found in email UID {uid}")
+
+    def get_attachment_bytes(
+        self,
+        folder: str = "INBOX",
+        uid: str | None = None,
+        filename: str | None = None,
+    ) -> tuple[bytes, str, str]:
+        """Fetch raw attachment bytes for server-side transfer.
+
+        Returns (data, filename, content_type).  Never sends data to Claude.
+        """
+        conn = self._ensure_connected()
+        conn.select(folder)
+
+        if not uid:
+            raise ValueError("uid is required")
+
+        status, msg_data = conn.uid("FETCH", str(uid), "(BODY.PEEK[])")
+        self._check_status(status, msg_data, "Failed to fetch email for transfer")
+
+        raw_item = next((item for item in msg_data if isinstance(item, tuple)), None)
+        if raw_item is None:
+            raise Exception(f"Email UID {uid} not found")
+
+        msg = email.message_from_bytes(raw_item[1], policy=default)
+
+        for part in msg.walk():
+            part_filename = part.get_filename()
+            if part_filename is None:
+                continue
+            if filename is not None and part_filename != filename:
+                continue
+            raw = part.get_payload(decode=True)
+            if raw is not None:
+                return raw, part_filename, part.get_content_type()
 
         target = f"'{filename}'" if filename else "any attachment"
         raise Exception(f"No attachment {target} found in email UID {uid}")

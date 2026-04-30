@@ -56,4 +56,48 @@ class DBConfig:
         )
 
 
-__all__ = ["IMAPConfig", "DBConfig"]
+@dataclass
+class TransferConfig:
+    """Configuration for direct server-to-server attachment transfers.
+
+    When PAPERLESS_URL + PAPERLESS_API_KEY are set, the tool
+    'transfer_to_paperless' becomes available.
+    When HERO_API_KEY is set, the tool 'transfer_to_hero' becomes available.
+
+    Environment variables:
+        PAPERLESS_URL           – Internal Paperless base URL (e.g. http://webserver:8000)
+        PAPERLESS_API_KEY       – Paperless API token
+        HERO_API_KEY            – HERO Bearer token
+        HERO_GRAPHQL_URL        – HERO GraphQL endpoint (has a default)
+        ATTACHMENT_MAX_SIZE_KB  – Max attachment size for get_attachment include_data=true (default: 50)
+    """
+
+    paperless_url: str = ""
+    paperless_api_key: str = ""
+    hero_api_key: str = ""
+    hero_graphql_url: str = "https://login.hero-software.de/api/external/v7/graphql"
+    attachment_max_size_kb: int = 50
+
+    @classmethod
+    def from_env(cls) -> "TransferConfig":
+        return cls(
+            paperless_url=os.getenv("PAPERLESS_URL", "").rstrip("/"),
+            paperless_api_key=os.getenv("PAPERLESS_API_KEY", ""),
+            hero_api_key=os.getenv("HERO_API_KEY", ""),
+            hero_graphql_url=os.getenv(
+                "HERO_GRAPHQL_URL",
+                "https://login.hero-software.de/api/external/v7/graphql",
+            ),
+            attachment_max_size_kb=int(os.getenv("ATTACHMENT_MAX_SIZE_KB", "50")),
+        )
+
+    @property
+    def paperless_enabled(self) -> bool:
+        return bool(self.paperless_url and self.paperless_api_key)
+
+    @property
+    def hero_enabled(self) -> bool:
+        return bool(self.hero_api_key)
+
+
+__all__ = ["IMAPConfig", "DBConfig", "TransferConfig"]
