@@ -234,14 +234,14 @@ class IMAPClient:
         conn = self._ensure_connected()
         conn.select(folder)
 
-        if uid:
-            query = f"UID {uid}"
-        else:
-            query = message_id
+        fetch_spec = "(UID FLAGS ENVELOPE BODY)" if include_body else "(UID FLAGS ENVELOPE)"
 
-        status, msg_data = conn.fetch(
-            query, "(UID FLAGS ENVELOPE BODY)" if include_body else "(UID FLAGS ENVELOPE)"
-        )
+        if uid:
+            # UID FETCH requires conn.uid('FETCH', ...) – conn.fetch("UID x", ...) is invalid
+            status, msg_data = conn.uid("FETCH", str(uid), fetch_spec)
+        else:
+            status, msg_data = conn.fetch(message_id, fetch_spec)
+
         self._check_status(status, msg_data, "Failed to fetch email")
 
         if not msg_data or not msg_data[0]:
