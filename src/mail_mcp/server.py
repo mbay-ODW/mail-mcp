@@ -69,6 +69,14 @@ def _run_sse() -> None:
         if not mcp_api_key:
             return True
         auth = request.headers.get("Authorization", "")
+        logging.info(
+            "Auth check: has_auth=%s starts_bearer=%s has_introspection_url=%s has_client_id=%s has_client_secret=%s",
+            bool(auth),
+            auth.startswith("Bearer "),
+            bool(oidc_introspection_url),
+            bool(oidc_client_id),
+            bool(oidc_client_secret),
+        )
         if auth == f"Bearer {mcp_api_key}":
             logging.info("Auth OK: statischer Bearer Token")
             return True
