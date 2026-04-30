@@ -87,6 +87,11 @@ def _run_sse() -> None:
                         auth=(oidc_client_id, oidc_client_secret),
                         timeout=5.0,
                     )
+                    logging.info(
+                        "Introspection HTTP %s body=%s",
+                        resp.status_code,
+                        resp.text[:500],
+                    )
                     data = resp.json()
                     active = data.get("active", False)
                     logging.info("OIDC Introspection: active=%s", active)
