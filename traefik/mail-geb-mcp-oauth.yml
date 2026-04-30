@@ -1,0 +1,62 @@
+http:
+  middlewares:
+    rewrite-authorize-mail-geb:
+      replacePath:
+        path: "/api/oidc/authorization"
+
+  routers:
+    mail-geb-mcp-authorize:
+      rule: "Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/authorize`)"
+      entrypoints: [websecure]
+      service: authelia-oidc
+      middlewares: [rewrite-authorize-mail-geb]
+      tls:
+        certResolver: mydnschallenge
+
+    mail-geb-mcp-root:
+      rule: "Host(`mail-geb-mcp.bay-ram.de`) && Path(`/`)"
+      entrypoints: [websecure]
+      service: authelia-oidc
+      tls:
+        certResolver: mydnschallenge
+
+    mail-geb-mcp-oidc:
+      rule: "Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/api/oidc`)"
+      entrypoints: [websecure]
+      service: authelia-oidc
+      tls:
+        certResolver: mydnschallenge
+
+    mail-geb-mcp-api:
+      rule: "Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/api`)"
+      entrypoints: [websecure]
+      service: authelia-oidc
+      tls:
+        certResolver: mydnschallenge
+
+    mail-geb-mcp-consent:
+      rule: "Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/consent`)"
+      entrypoints: [websecure]
+      service: authelia-oidc
+      tls:
+        certResolver: mydnschallenge
+
+    mail-geb-mcp-static:
+      rule: "Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/static`)"
+      entrypoints: [websecure]
+      service: authelia-oidc
+      tls:
+        certResolver: mydnschallenge
+
+    mail-geb-mcp-wellknown:
+      rule: "Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/.well-known`)"
+      entrypoints: [websecure]
+      service: authelia-oidc
+      tls:
+        certResolver: mydnschallenge
+
+  services:
+    authelia-oidc:
+      loadBalancer:
+        servers:
+          - url: "http://authelia:9091"

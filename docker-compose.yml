@@ -1,0 +1,49 @@
+services:
+  mail-geb-mcp:
+    image: ghcr.io/mbay-odw/mail-geb-mcp:latest
+    container_name: mail-geb-mcp
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=INFO
+      - MCP_TRANSPORT=sse
+      - PORT=8000
+      # IMAP
+      - IMAP_HOST=${IMAP_HOST}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_SSL=${IMAP_SSL:-true}
+      - EMAIL_USER=${EMAIL_USER}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      # SMTP
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_SSL=${SMTP_SSL:-true}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-false}
+      # Auth
+      - MCP_API_KEY=${MCP_API_KEY}
+      - OIDC_INTROSPECTION_URL=https://mail-geb-mcp.bay-ram.de/api/oidc/introspection
+      - OIDC_CLIENT_ID=mail-geb-mcp
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+    expose:
+      - "8000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.routers.mail-geb-mcp-sse.rule=Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/sse`)"
+      - "traefik.http.routers.mail-geb-mcp-sse.entrypoints=websecure"
+      - "traefik.http.routers.mail-geb-mcp-sse.service=mail-geb-mcp-svc"
+      - "traefik.http.routers.mail-geb-mcp-sse.tls=true"
+      - "traefik.http.routers.mail-geb-mcp-sse.tls.certresolver=mydnschallenge"
+      - "traefik.http.routers.mail-geb-mcp-sse.middlewares=middlewares-rate-limit@file,middlewares-secure-headers@file"
+      - "traefik.http.routers.mail-geb-mcp-msg.rule=Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/messages`)"
+      - "traefik.http.routers.mail-geb-mcp-msg.entrypoints=websecure"
+      - "traefik.http.routers.mail-geb-mcp-msg.service=mail-geb-mcp-svc"
+      - "traefik.http.routers.mail-geb-mcp-msg.tls=true"
+      - "traefik.http.routers.mail-geb-mcp-msg.tls.certresolver=mydnschallenge"
+      - "traefik.http.routers.mail-geb-mcp-msg.middlewares=middlewares-rate-limit@file,middlewares-secure-headers@file"
+      - "traefik.http.services.mail-geb-mcp-svc.loadbalancer.server.port=8000"
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    external: true
