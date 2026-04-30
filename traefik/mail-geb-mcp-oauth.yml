@@ -55,8 +55,4 @@ http:
       tls:
         certResolver: mydnschallenge
 
-  services:
-    authelia-oidc:
-      loadBalancer:
-        servers:
-          - url: "http://authelia:9091"
+  # authelia-oidc service is defined centrally in hero-mcp-oauth.yml (shared)
