@@ -20,7 +20,7 @@ services:
       - SMTP_STARTTLS=${SMTP_STARTTLS:-false}
       # Auth
       - MCP_API_KEY=${MCP_API_KEY}
-      - OIDC_INTROSPECTION_URL=https://mail-geb-mcp.bay-ram.de/api/oidc/introspection
+      - OIDC_INTROSPECTION_URL=https://mail-geb-mcp.${DOMAIN}/api/oidc/introspection
       - OIDC_CLIENT_ID=mail-geb-mcp
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
       # Local email DB (SQLite + FTS5)
@@ -35,13 +35,13 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
-      - "traefik.http.routers.mail-geb-mcp-sse.rule=Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/sse`)"
+      - "traefik.http.routers.mail-geb-mcp-sse.rule=Host(`mail-geb-mcp.${DOMAIN}`) && PathPrefix(`/sse`)"
       - "traefik.http.routers.mail-geb-mcp-sse.entrypoints=websecure"
       - "traefik.http.routers.mail-geb-mcp-sse.service=mail-geb-mcp-svc"
       - "traefik.http.routers.mail-geb-mcp-sse.tls=true"
       - "traefik.http.routers.mail-geb-mcp-sse.tls.certresolver=mydnschallenge"
       - "traefik.http.routers.mail-geb-mcp-sse.middlewares=middlewares-rate-limit@file,middlewares-secure-headers@file"
-      - "traefik.http.routers.mail-geb-mcp-msg.rule=Host(`mail-geb-mcp.bay-ram.de`) && PathPrefix(`/messages`)"
+      - "traefik.http.routers.mail-geb-mcp-msg.rule=Host(`mail-geb-mcp.${DOMAIN}`) && PathPrefix(`/messages`)"
       - "traefik.http.routers.mail-geb-mcp-msg.entrypoints=websecure"
       - "traefik.http.routers.mail-geb-mcp-msg.service=mail-geb-mcp-svc"
       - "traefik.http.routers.mail-geb-mcp-msg.tls=true"
