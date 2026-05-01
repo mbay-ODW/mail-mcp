@@ -145,8 +145,53 @@ def _run_sse() -> None:
         # and logs "Exception in ASGI application" (MCP SDK ≥ 1.6 requirement)
         return Response()
 
+    # Streamable-HTTP transport (current MCP spec). Modern Claude.ai sends
+    # POST requests to the connector URL with real JSON-RPC payloads from
+    # the very first connect, regardless of whether the URL ends in /sse
+    # or /mcp. We MUST speak Streamable-HTTP there or the connector cannot
+    # initialise after a fresh OAuth login (e.g. after an Authelia restart).
+    import anyio
+    from mcp.server.streamable_http import StreamableHTTPServerTransport
+
+    async def handle_streamable_http(request: Request):
+        if not await _is_authorized(request):
+            logging.warning("Streamable-HTTP denied – unauthenticated (%s)", request.url.path)
+            return Response("Unauthorized", status_code=401)
+        logging.info("Streamable-HTTP request (%s) from %s", request.url.path, request.client)
+        # Stateless: new transport per request.
+        transport = StreamableHTTPServerTransport(
+            mcp_session_id=None, is_json_response_enabled=True
+        )
+        try:
+            async with transport.connect() as streams:
+                async with anyio.create_task_group() as tg:
+
+                    async def _run_server():
+                        try:
+                            await app.run(
+                                streams[0],
+                                streams[1],
+                                app.create_initialization_options(),
+                            )
+                        except Exception:
+                            logging.exception("server.run crashed")
+
+                    tg.start_soon(_run_server)
+                    await transport.handle_request(
+                        request.scope, request.receive, request._send
+                    )
+                    tg.cancel_scope.cancel()
+        except Exception:
+            logging.exception("Streamable-HTTP handler error")
+            raise
+        return Response()
+
     starlette_app = Starlette(
         routes=[
+            # Streamable-HTTP (current spec) – Claude.ai uses this first.
+            Route("/sse", endpoint=handle_streamable_http, methods=["POST"]),
+            Route("/mcp", endpoint=handle_streamable_http, methods=["POST"]),
+            # Classic SSE (Claude Desktop / older clients).
             Route("/sse", endpoint=handle_sse, methods=["GET"]),
             Mount("/messages/", app=sse.handle_post_message),
         ],
