@@ -155,9 +155,7 @@ async def upload_to_hero(
         upload_resp = resp.json()
     uuid = upload_resp.get("uuid")
     if not uuid:
-        raise RuntimeError(
-            f"HERO file-uploads response missing 'uuid' field: {upload_resp}"
-        )
+        raise RuntimeError(f"HERO file-uploads response missing 'uuid' field: {upload_resp}")
     logging.info(
         "HERO step 1 OK: filename=%s size=%d uuid=%s",
         filename,
