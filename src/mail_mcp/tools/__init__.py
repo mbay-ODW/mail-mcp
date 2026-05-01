@@ -116,9 +116,15 @@ def get_transfer_tools() -> list[Tool]:
             Tool(
                 name="transfer_to_hero",
                 description=(
-                    "Fetch an email attachment directly from IMAP and upload it to a "
-                    "HERO project's document storage – no binary data passes through "
-                    "Claude's context. Returns the HERO document ID."
+                    "Fetch an email attachment from IMAP and upload it to a HERO "
+                    "project_match's document storage – binary data is streamed "
+                    "server-to-server, never through Claude's context. "
+                    "Internally runs HERO's two-step upload: "
+                    "(1) POST to /api/external/v1/file-uploads → uuid, "
+                    "(2) GraphQL upload_document mutation with file_upload_uuid + "
+                    "target=project_match. "
+                    "Use this for attachments of any size; the 50 KB limit on "
+                    "get_attachment(include_data=true) does NOT apply here."
                 ),
                 inputSchema={
                     "type": "object",
@@ -138,11 +144,10 @@ def get_transfer_tools() -> list[Tool]:
                         },
                         "project_id": {
                             "type": "string",
-                            "description": "HERO project ID",
-                        },
-                        "category": {
-                            "type": "string",
-                            "description": "Document category (optional)",
+                            "description": (
+                                "HERO project_match.id (numeric, e.g. '10295003'). "
+                                "Use the hero-mcp tool hero_get_projects to look it up."
+                            ),
                         },
                     },
                     "required": ["uid", "project_id"],

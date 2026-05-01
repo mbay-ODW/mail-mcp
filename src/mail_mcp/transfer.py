@@ -4,7 +4,6 @@ Uploads attachment binaries directly to Paperless-ngx or HERO without
 passing base64 through Claude's context window.
 """
 
-import json
 import logging
 from typing import Any
 
@@ -123,49 +122,100 @@ async def upload_to_hero(
     filename: str,
     content_type: str,
     project_id: str,
-    category: str | None = None,
+    category: str | None = None,  # kept for backwards compat; unused
 ) -> dict[str, Any]:
-    """Upload attachment directly to HERO project documents via GraphQL multipart."""
+    """Upload attachment to a HERO project_match using HERO's two-step flow.
+
+    Step 1: POST the binary as multipart/form-data to
+            /api/external/v1/file-uploads → response contains 'uuid'.
+    Step 2: Run the GraphQL upload_document mutation with file_upload_uuid +
+            target=project_match + target_id=projectId.
+
+    The single-shot graphql-multipart-request-spec upload that this used to
+    do is NOT supported by HERO's API.
+    """
+    del category  # legacy parameter, ignored
     cfg = _get_cfg()
     if not cfg.hero_enabled:
         raise RuntimeError("HERO transfer not configured – set HERO_API_KEY.")
 
-    headers = {
+    headers_auth = {
         "Authorization": f"Bearer {cfg.hero_api_key}",
         "Accept": "application/json",
     }
 
-    query = """
-    mutation UploadDocument($project_id: ID!, $file: Upload!, $category: String) {
-      upload_document(project_id: $project_id, file: $file, category: $category) {
+    # ---- Step 1: REST file upload --------------------------------------------------
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            cfg.hero_file_upload_url,
+            files={"file": (filename, data, content_type)},
+            headers=headers_auth,
+        )
+        resp.raise_for_status()
+        upload_resp = resp.json()
+    uuid = upload_resp.get("uuid")
+    if not uuid:
+        raise RuntimeError(
+            f"HERO file-uploads response missing 'uuid' field: {upload_resp}"
+        )
+    logging.info(
+        "HERO step 1 OK: filename=%s size=%d uuid=%s",
+        filename,
+        len(data),
+        uuid,
+    )
+
+    # ---- Step 2: GraphQL upload_document mutation ----------------------------------
+    try:
+        project_id_int = int(project_id)
+    except (TypeError, ValueError) as e:
+        raise RuntimeError(
+            f"project_id must be numeric (project_match.id), got: {project_id!r}"
+        ) from e
+
+    mutation = """
+    mutation UploadDocument($uuid: String!, $projectId: Int!) {
+      upload_document(
+        document: { project_match_id: $projectId, type: "file_upload" }
+        file_upload_uuid: $uuid
+        target: project_match
+        target_id: $projectId
+      ) {
         id
-        filename
-        created_at
+        nr
+        type
       }
     }
     """
-    variables: dict[str, Any] = {
-        "project_id": project_id,
-        "file": None,  # replaced by multipart map
-        "category": category,
+    payload = {
+        "query": mutation,
+        "variables": {"uuid": uuid, "projectId": project_id_int},
     }
-    operations = json.dumps({"query": query, "variables": variables})
-    map_ = json.dumps({"0": ["variables.file"]})
-
+    headers_json = {**headers_auth, "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             cfg.hero_graphql_url,
-            data={"operations": operations, "map": map_},
-            files={"0": (filename, data, content_type)},
-            headers=headers,
+            json=payload,
+            headers=headers_json,
         )
         resp.raise_for_status()
         resp_data = resp.json()
-        if "errors" in resp_data:
-            raise RuntimeError(f"HERO GraphQL error: {resp_data['errors']}")
-        result = resp_data.get("data", {})
-        logging.info("HERO upload OK: filename=%s project=%s", filename, project_id)
-        return {"success": True, "filename": filename, "size_bytes": len(data), **result}
+    if "errors" in resp_data:
+        raise RuntimeError(f"HERO GraphQL error: {resp_data['errors']}")
+    result = (resp_data.get("data") or {}).get("upload_document") or {}
+    logging.info(
+        "HERO step 2 OK: filename=%s project_match_id=%d document_id=%s",
+        filename,
+        project_id_int,
+        result.get("id"),
+    )
+    return {
+        "success": True,
+        "filename": filename,
+        "size_bytes": len(data),
+        "uuid": uuid,
+        "document": result,
+    }
 
 
 __all__ = ["upload_to_paperless", "upload_to_hero"]

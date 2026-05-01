@@ -69,6 +69,7 @@ class TransferConfig:
         PAPERLESS_API_KEY       – Paperless API token
         HERO_API_KEY            – HERO Bearer token
         HERO_GRAPHQL_URL        – HERO GraphQL endpoint (has a default)
+        HERO_FILE_UPLOAD_URL    – HERO REST file-upload endpoint (has a default)
         ATTACHMENT_MAX_SIZE_KB  – Max attachment size for get_attachment include_data=true (default: 50)
     """
 
@@ -76,6 +77,7 @@ class TransferConfig:
     paperless_api_key: str = ""
     hero_api_key: str = ""
     hero_graphql_url: str = "https://login.hero-software.de/api/external/v7/graphql"
+    hero_file_upload_url: str = "https://login.hero-software.de/api/external/v1/file-uploads"
     attachment_max_size_kb: int = 50
 
     @classmethod
@@ -87,6 +89,10 @@ class TransferConfig:
             hero_graphql_url=os.getenv(
                 "HERO_GRAPHQL_URL",
                 "https://login.hero-software.de/api/external/v7/graphql",
+            ),
+            hero_file_upload_url=os.getenv(
+                "HERO_FILE_UPLOAD_URL",
+                "https://login.hero-software.de/api/external/v1/file-uploads",
             ),
             attachment_max_size_kb=int(os.getenv("ATTACHMENT_MAX_SIZE_KB", "50")),
         )
