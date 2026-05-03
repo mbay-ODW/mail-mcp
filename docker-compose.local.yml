@@ -1,0 +1,40 @@
+# Local development stack – binds to 127.0.0.1 only, no Traefik, no
+# Authelia, no TLS. Reads IMAP credentials from a local .env.
+#
+# Usage:
+#   cp .env.example .env   # set IMAP_HOST, EMAIL_USER, EMAIL_PASSWORD
+#   docker compose -f docker-compose.local.yml up
+#
+# Connect from Claude Desktop with:
+#   {"mcpServers": {"mail-local": {"url": "http://localhost:8002/sse"}}}
+#
+# Auth is intentionally disabled – do NOT expose this port to the network.
+services:
+  mail-mcp:
+    image: ghcr.io/mbay-odw/mail-mcp:latest
+    container_name: mail-mcp-local
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - MCP_TRANSPORT=sse
+      - PORT=8000
+      # IMAP / SMTP
+      - IMAP_HOST=${IMAP_HOST}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_SSL=${IMAP_SSL:-true}
+      - EMAIL_USER=${EMAIL_USER}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - SMTP_HOST=${SMTP_HOST:-${IMAP_HOST}}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      # Optional: server-to-server transfers
+      - PAPERLESS_URL=${PAPERLESS_URL:-}
+      - PAPERLESS_API_KEY=${PAPERLESS_API_KEY:-}
+      - HERO_API_KEY=${HERO_API_KEY:-}
+      # Auth deliberately not set → all requests pass through.
+    ports:
+      - "127.0.0.1:8002:8000"
+    volumes:
+      - mail_mcp_local_data:/data
+
+volumes:
+  mail_mcp_local_data:
