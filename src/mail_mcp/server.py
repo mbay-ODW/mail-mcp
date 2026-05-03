@@ -174,7 +174,9 @@ def _run_sse() -> None:
     async def handle_streamable_http(request: Request):
         ok, reason = await _is_authorized(request)
         if not ok:
-            logging.warning("Streamable-HTTP denied – unauthenticated (%s) reason=%s", request.url.path, reason)
+            logging.warning(
+                "Streamable-HTTP denied – unauthenticated (%s) reason=%s", request.url.path, reason
+            )
             return _unauthorized(reason)
         logging.info("Streamable-HTTP request (%s) from %s", request.url.path, request.client)
         # Stateless: new transport per request.
@@ -196,9 +198,7 @@ def _run_sse() -> None:
                             logging.exception("server.run crashed")
 
                     tg.start_soon(_run_server)
-                    await transport.handle_request(
-                        request.scope, request.receive, request._send
-                    )
+                    await transport.handle_request(request.scope, request.receive, request._send)
                     tg.cancel_scope.cancel()
         except Exception:
             logging.exception("Streamable-HTTP handler error")
