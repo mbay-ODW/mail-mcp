@@ -139,17 +139,23 @@ def _run_sse() -> None:
         return False, "invalid_token"
 
     def _unauthorized(reason: str | None) -> Response:
-        """Build a 401 with an RFC 6750 WWW-Authenticate hint so the OAuth
-        client knows whether to refresh its token or re-prompt the user."""
-        realm = "mail-mcp"
+        """Build a 401. With reason="invalid_token" we add an RFC 6750
+        WWW-Authenticate hint so the OAuth client runs the silent
+        refresh-token flow. With reason="no_header" we deliberately omit
+        the header – sending `Bearer realm="..."` would short-circuit
+        Claude.ai's OAuth discovery and prevent it from reaching
+        Authelia."""
         if reason == "invalid_token":
             www = (
-                f'Bearer realm="{realm}", error="invalid_token", '
-                f'error_description="The access token expired or is invalid"'
+                'Bearer realm="mail-mcp", error="invalid_token", '
+                'error_description="The access token expired or is invalid"'
             )
-        else:
-            www = f'Bearer realm="{realm}"'
-        return Response("Unauthorized", status_code=401, headers={"WWW-Authenticate": www})
+            return Response(
+                "Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": www},
+            )
+        return Response("Unauthorized", status_code=401)
 
     sse = SseServerTransport("/messages/")
 
