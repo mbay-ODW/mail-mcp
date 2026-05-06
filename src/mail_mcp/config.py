@@ -77,7 +77,7 @@ class TransferConfig:
     paperless_api_key: str = ""
     hero_api_key: str = ""
     hero_graphql_url: str = "https://login.hero-software.de/api/external/v7/graphql"
-    hero_file_upload_url: str = "https://login.hero-software.de/api/external/v1/file-uploads"
+    hero_file_upload_url: str = "https://login.hero-software.de/app/v8/FileUploads/upload"
     attachment_max_size_kb: int = 50
 
     @classmethod
@@ -92,7 +92,7 @@ class TransferConfig:
             ),
             hero_file_upload_url=os.getenv(
                 "HERO_FILE_UPLOAD_URL",
-                "https://login.hero-software.de/api/external/v1/file-uploads",
+                "https://login.hero-software.de/app/v8/FileUploads/upload",
             ),
             attachment_max_size_kb=int(os.getenv("ATTACHMENT_MAX_SIZE_KB", "50")),
         )

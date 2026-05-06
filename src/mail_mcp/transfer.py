@@ -127,29 +127,33 @@ async def upload_to_hero(
     """Upload attachment to a HERO project_match using HERO's two-step flow.
 
     Step 1: POST the binary as multipart/form-data to
-            /api/external/v1/file-uploads → response contains 'uuid'.
+            /app/v8/FileUploads/upload (auth via `x-auth-token` header,
+            NOT `Authorization: Bearer`!) → response contains 'uuid'.
     Step 2: Run the GraphQL upload_document mutation with file_upload_uuid +
-            target=project_match + target_id=projectId.
+            target=project_match + target_id=projectId (auth via Bearer
+            here, since this hits /api/external/v7/graphql).
 
     The single-shot graphql-multipart-request-spec upload that this used to
-    do is NOT supported by HERO's API.
+    do is NOT supported by HERO's API. Confirmed by HERO support
+    2026-05-06; see https://support.hero-software.de/hc/s/article/
+    7474773464732-GraphQL-Dateiupload.
     """
     del category  # legacy parameter, ignored
     cfg = _get_cfg()
     if not cfg.hero_enabled:
         raise RuntimeError("HERO transfer not configured – set HERO_API_KEY.")
 
-    headers_auth = {
-        "Authorization": f"Bearer {cfg.hero_api_key}",
+    # ---- Step 1: REST file upload --------------------------------------------------
+    # Different auth header than GraphQL: `x-auth-token` instead of Bearer.
+    upload_headers = {
+        "x-auth-token": cfg.hero_api_key,
         "Accept": "application/json",
     }
-
-    # ---- Step 1: REST file upload --------------------------------------------------
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             cfg.hero_file_upload_url,
             files={"file": (filename, data, content_type)},
-            headers=headers_auth,
+            headers=upload_headers,
         )
         resp.raise_for_status()
         upload_resp = resp.json()
@@ -189,12 +193,17 @@ async def upload_to_hero(
         "query": mutation,
         "variables": {"uuid": uuid, "projectId": project_id_int},
     }
-    headers_json = {**headers_auth, "Content-Type": "application/json"}
+    # GraphQL endpoint uses Bearer auth (different from upload above).
+    graphql_headers = {
+        "Authorization": f"Bearer {cfg.hero_api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             cfg.hero_graphql_url,
             json=payload,
-            headers=headers_json,
+            headers=graphql_headers,
         )
         resp.raise_for_status()
         resp_data = resp.json()
