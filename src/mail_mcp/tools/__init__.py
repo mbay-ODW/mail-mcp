@@ -634,6 +634,219 @@ def get_smtp_tools() -> list[Tool]:
                 "required": ["to", "subject"],
             },
         ),
+        # ------------------------------------------------------------------
+        # Draft management (IMAP APPEND, no SMTP).
+        # Mirror of send_email / send_reply / send_forward but writing to
+        # the IMAP Drafts folder so the user can review / edit / send the
+        # message manually before it leaves the inbox.
+        # ------------------------------------------------------------------
+        Tool(
+            name="save_draft",
+            description=(
+                "Save an email as a DRAFT in the IMAP Drafts folder (no send). "
+                "Mirror of send_email – returns the new draft's UID + folder. "
+                "Drafts folder is auto-detected via SPECIAL-USE; override with "
+                "drafts_folder if your server doesn't advertise it."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of recipient email addresses",
+                    },
+                    "subject": {"type": "string", "description": "Email subject"},
+                    "body_text": {"type": "string", "description": "Plain text body"},
+                    "body_html": {"type": "string", "description": "HTML body"},
+                    "cc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "CC recipients",
+                    },
+                    "bcc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "BCC recipients",
+                    },
+                    "attachments": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "filename": {"type": "string"},
+                                "content_type": {"type": "string"},
+                                "data_base64": {"type": "string"},
+                            },
+                        },
+                        "description": "Attachments (base64 encoded)",
+                    },
+                    "drafts_folder": {
+                        "type": "string",
+                        "description": (
+                            "Optional override for the drafts folder name. "
+                            "Default: auto-detect via IMAP SPECIAL-USE \\Drafts; "
+                            "fallback INBOX.Drafts."
+                        ),
+                    },
+                },
+                "required": ["to", "subject"],
+            },
+        ),
+        Tool(
+            name="update_draft",
+            description=(
+                "Replace an existing draft with new content. Internally APPENDs "
+                "a new draft and EXPUNGEs the old UID, so the returned UID is "
+                "different from the input."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "uid": {
+                        "type": "integer",
+                        "description": "UID of the draft to replace",
+                    },
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "subject": {"type": "string"},
+                    "body_text": {"type": "string"},
+                    "body_html": {"type": "string"},
+                    "cc": {"type": "array", "items": {"type": "string"}},
+                    "bcc": {"type": "array", "items": {"type": "string"}},
+                    "attachments": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "filename": {"type": "string"},
+                                "content_type": {"type": "string"},
+                                "data_base64": {"type": "string"},
+                            },
+                        },
+                    },
+                    "drafts_folder": {"type": "string"},
+                },
+                "required": ["uid", "to", "subject"],
+            },
+        ),
+        Tool(
+            name="delete_draft",
+            description=(
+                "Permanently delete a draft (STORE \\Deleted + EXPUNGE). "
+                "Idempotent: returns deleted=false / reason=draft_not_found if "
+                "the UID is no longer in the folder."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "integer"},
+                    "drafts_folder": {
+                        "type": "string",
+                        "description": "Folder containing the draft (default: auto-detected drafts folder)",
+                    },
+                },
+                "required": ["uid"],
+            },
+        ),
+        Tool(
+            name="save_reply_draft",
+            description=(
+                "Save a properly-threaded reply as a DRAFT (no send). "
+                "Sets In-Reply-To + References from the original message and "
+                "prepends 'Re:' to the subject (deduplicating 'Re: Re:'). "
+                "If reply_all=true, copies the original To+Cc to Cc (minus "
+                "the user's own address)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "original_uid": {
+                        "type": "integer",
+                        "description": "UID of the email being replied to",
+                    },
+                    "original_folder": {
+                        "type": "string",
+                        "description": "Folder containing the original (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "body_text": {"type": "string"},
+                    "body_html": {"type": "string"},
+                    "reply_all": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, includes original To+Cc as Cc (minus self)",
+                    },
+                    "include_quote": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "If true, append a quoted copy of the original body",
+                    },
+                    "attachments": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "filename": {"type": "string"},
+                                "content_type": {"type": "string"},
+                                "data_base64": {"type": "string"},
+                            },
+                        },
+                    },
+                    "drafts_folder": {"type": "string"},
+                },
+                "required": ["original_uid"],
+            },
+        ),
+        Tool(
+            name="save_forward_draft",
+            description=(
+                "Save a forwarded copy as a DRAFT (no send). Subject is "
+                "prefixed with 'Fwd:' and the original headers + body are "
+                "embedded as a quoted block. By default the original "
+                "attachments are carried over – set forward_attachments=false "
+                "to drop them."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "original_uid": {"type": "integer"},
+                    "original_folder": {
+                        "type": "string",
+                        "description": "Folder containing the original (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "to": {"type": "array", "items": {"type": "string"}},
+                    "cc": {"type": "array", "items": {"type": "string"}},
+                    "bcc": {"type": "array", "items": {"type": "string"}},
+                    "body_text": {
+                        "type": "string",
+                        "description": "Optional preface text before the forwarded block",
+                    },
+                    "body_html": {"type": "string"},
+                    "forward_attachments": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Carry over the original attachments (default true)",
+                    },
+                    "additional_attachments": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "filename": {"type": "string"},
+                                "content_type": {"type": "string"},
+                                "data_base64": {"type": "string"},
+                            },
+                        },
+                    },
+                    "drafts_folder": {"type": "string"},
+                },
+                "required": ["original_uid", "to"],
+            },
+        ),
     ]
 
 
@@ -1051,6 +1264,88 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
             body_text=arguments.get("body_text"),
             body_html=arguments.get("body_html"),
         )
+        return [TextContent(type="text", text=str(result))]
+
+    # ---------------------------------------------------------------------
+    # Draft management – APPENDs to the IMAP drafts folder, no SMTP send.
+    # The drafts module needs the raw imaplib connection (for APPEND /
+    # UID STORE / EXPUNGE), which we get from the IMAP client wrapper.
+    # ---------------------------------------------------------------------
+    elif name in (
+        "save_draft",
+        "update_draft",
+        "delete_draft",
+        "save_reply_draft",
+        "save_forward_draft",
+    ):
+        from ..operations import drafts as draft_ops
+
+        connection = imap_client._ensure_connected()
+        sender = imap_client.config.user
+
+        if name == "save_draft":
+            result = draft_ops.save_draft(
+                connection=connection,
+                sender=sender,
+                to=arguments["to"],
+                subject=arguments["subject"],
+                body_text=arguments.get("body_text"),
+                body_html=arguments.get("body_html"),
+                cc=arguments.get("cc"),
+                bcc=arguments.get("bcc"),
+                attachments=arguments.get("attachments"),
+                drafts_folder=arguments.get("drafts_folder"),
+            )
+        elif name == "update_draft":
+            result = draft_ops.update_draft(
+                connection=connection,
+                uid=int(arguments["uid"]),
+                sender=sender,
+                to=arguments["to"],
+                subject=arguments["subject"],
+                body_text=arguments.get("body_text"),
+                body_html=arguments.get("body_html"),
+                cc=arguments.get("cc"),
+                bcc=arguments.get("bcc"),
+                attachments=arguments.get("attachments"),
+                folder=arguments.get("drafts_folder"),
+            )
+        elif name == "delete_draft":
+            result = draft_ops.delete_draft(
+                connection=connection,
+                uid=int(arguments["uid"]),
+                folder=arguments.get("drafts_folder"),
+            )
+        elif name == "save_reply_draft":
+            result = draft_ops.save_reply_draft(
+                connection=connection,
+                sender=sender,
+                original_uid=int(arguments["original_uid"]),
+                original_folder=arguments.get("original_folder", "INBOX"),
+                body_text=arguments.get("body_text"),
+                body_html=arguments.get("body_html"),
+                reply_all=arguments.get("reply_all", False),
+                include_quote=arguments.get("include_quote", True),
+                attachments=arguments.get("attachments"),
+                drafts_folder=arguments.get("drafts_folder"),
+            )
+        elif name == "save_forward_draft":
+            result = draft_ops.save_forward_draft(
+                connection=connection,
+                sender=sender,
+                original_uid=int(arguments["original_uid"]),
+                original_folder=arguments.get("original_folder", "INBOX"),
+                to=arguments["to"],
+                cc=arguments.get("cc"),
+                bcc=arguments.get("bcc"),
+                body_text=arguments.get("body_text"),
+                body_html=arguments.get("body_html"),
+                forward_attachments=arguments.get("forward_attachments", True),
+                additional_attachments=arguments.get("additional_attachments"),
+                drafts_folder=arguments.get("drafts_folder"),
+            )
+        else:  # pragma: no cover - exhaustive above
+            return None
         return [TextContent(type="text", text=str(result))]
 
     return None  # Not an SMTP tool
