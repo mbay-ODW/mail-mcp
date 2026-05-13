@@ -933,8 +933,7 @@ def _require_message_id_or_uid(name: str, arguments: dict) -> None:
         return
     if not arguments.get("message_id") and not arguments.get("uid"):
         raise ValueError(
-            f"{name}: either 'message_id' (sequence number) or 'uid' "
-            "(unique id) must be provided"
+            f"{name}: either 'message_id' (sequence number) or 'uid' (unique id) must be provided"
         )
 
 
