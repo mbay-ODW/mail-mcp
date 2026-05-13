@@ -263,10 +263,6 @@ def get_imap_tools() -> list[Tool]:
                         "default": True,
                     },
                 },
-                "anyOf": [
-                    {"required": ["message_id"]},
-                    {"required": ["uid"]},
-                ],
             },
         ),
         Tool(
@@ -289,10 +285,6 @@ def get_imap_tools() -> list[Tool]:
                         "description": "Unique ID of the message",
                     },
                 },
-                "anyOf": [
-                    {"required": ["message_id"]},
-                    {"required": ["uid"]},
-                ],
             },
         ),
         Tool(
@@ -315,10 +307,6 @@ def get_imap_tools() -> list[Tool]:
                         "description": "Unique ID of the message",
                     },
                 },
-                "anyOf": [
-                    {"required": ["message_id"]},
-                    {"required": ["uid"]},
-                ],
             },
         ),
         Tool(
@@ -341,10 +329,6 @@ def get_imap_tools() -> list[Tool]:
                         "description": "Unique ID of the message",
                     },
                 },
-                "anyOf": [
-                    {"required": ["message_id"]},
-                    {"required": ["uid"]},
-                ],
             },
         ),
         Tool(
@@ -367,10 +351,6 @@ def get_imap_tools() -> list[Tool]:
                         "description": "Unique ID of the message",
                     },
                 },
-                "anyOf": [
-                    {"required": ["message_id"]},
-                    {"required": ["uid"]},
-                ],
             },
         ),
         Tool(
@@ -397,10 +377,6 @@ def get_imap_tools() -> list[Tool]:
                     },
                 },
                 "required": ["source_folder", "target_folder"],
-                "anyOf": [
-                    {"required": ["message_id"]},
-                    {"required": ["uid"]},
-                ],
             },
         ),
         Tool(
@@ -427,10 +403,6 @@ def get_imap_tools() -> list[Tool]:
                     },
                 },
                 "required": ["source_folder", "target_folder"],
-                "anyOf": [
-                    {"required": ["message_id"]},
-                    {"required": ["uid"]},
-                ],
             },
         ),
         Tool(
@@ -453,10 +425,6 @@ def get_imap_tools() -> list[Tool]:
                         "description": "Unique ID of the message",
                     },
                 },
-                "anyOf": [
-                    {"required": ["message_id"]},
-                    {"required": ["uid"]},
-                ],
             },
         ),
         Tool(
@@ -940,8 +908,39 @@ def get_all_tools() -> list[Tool]:
     return tools
 
 
+_REQUIRES_MSG_OR_UID = {
+    "get_email",
+    "mark_read",
+    "mark_unread",
+    "mark_flagged",
+    "unmark_flagged",
+    "move_email",
+    "copy_email",
+    "delete_email",
+}
+
+
+def _require_message_id_or_uid(name: str, arguments: dict) -> None:
+    """Validate that either ``message_id`` or ``uid`` was supplied.
+
+    The Anthropic Tools API rejects ``anyOf`` at the top level of an
+    ``input_schema`` (see error `tools.<n>.custom.input_schema: input_schema
+    does not support oneOf, allOf, or anyOf at the top level`), so the
+    either-or constraint that used to live in the JSON Schema is now
+    enforced here at call time.
+    """
+    if name not in _REQUIRES_MSG_OR_UID:
+        return
+    if not arguments.get("message_id") and not arguments.get("uid"):
+        raise ValueError(
+            f"{name}: either 'message_id' (sequence number) or 'uid' "
+            "(unique id) must be provided"
+        )
+
+
 async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle IMAP tool calls."""
+    _require_message_id_or_uid(name, arguments)
     client = get_imap_client()
 
     if name == "list_folders":
