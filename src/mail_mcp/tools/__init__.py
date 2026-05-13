@@ -15,6 +15,57 @@ _DB_ENABLED = os.getenv("EMAIL_DB_ENABLED", "false").lower() == "true"
 _transfer_cfg = TransferConfig.from_env()
 _ATTACHMENT_MAX_BYTES = _transfer_cfg.attachment_max_size_kb * 1024
 
+# Shared schema fragment for the ``attach_from`` parameter exposed by
+# send_email / save_draft / update_draft / save_reply_draft / save_forward_draft.
+# It lets callers reference documents stored in external systems (currently
+# Paperless-ngx; HERO is stubbed for future support). The server fetches the
+# binary directly from the source and attaches it as a normal MIME part – no
+# bytes ever traverse Claude's context window, and the recipient does not
+# need access to the source system.
+_ATTACH_FROM_SCHEMA: dict = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "source": {
+                "type": "string",
+                "enum": ["paperless"],
+                "description": (
+                    "Source system holding the document. Currently only "
+                    "'paperless' is wired up; 'hero' is reserved for future use."
+                ),
+            },
+            "id": {
+                "type": "integer",
+                "description": "Document primary key in the source system.",
+            },
+            "filename": {
+                "type": "string",
+                "description": (
+                    "Optional filename override. Defaults to the filename "
+                    "stored in the source system (e.g. Paperless's "
+                    "original_file_name or Content-Disposition)."
+                ),
+            },
+            "as_original": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "Paperless only: fetch the originally uploaded file "
+                    "instead of Paperless's post-OCR archive PDF (default)."
+                ),
+            },
+        },
+        "required": ["source", "id"],
+    },
+    "description": (
+        "References to documents in external systems (Paperless-ngx). The "
+        "server downloads each one directly and attaches it as a normal "
+        "MIME attachment – no binary data passes through the LLM context, "
+        "and recipients do not need access to the source system."
+    ),
+}
+
 
 def _db_search(store, criteria: str, folder: str, limit: int) -> list[dict] | None:
     """Translate simple IMAP criteria string to a DB query.
@@ -484,7 +535,12 @@ def get_smtp_tools() -> list[Tool]:
     return [
         Tool(
             name="send_email",
-            description="Send an email with optional HTML body and attachments",
+            description=(
+                "Send an email with optional HTML body and attachments. "
+                "Use `attach_from` to attach documents stored in Paperless-ngx "
+                "by ID – the server fetches the binary directly so no bytes "
+                "pass through the LLM context."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -527,6 +583,7 @@ def get_smtp_tools() -> list[Tool]:
                         },
                         "description": "Attachments (base64 encoded)",
                     },
+                    "attach_from": _ATTACH_FROM_SCHEMA,
                 },
                 "required": ["to", "subject"],
             },
@@ -649,6 +706,7 @@ def get_smtp_tools() -> list[Tool]:
                         },
                         "description": "Attachments (base64 encoded)",
                     },
+                    "attach_from": _ATTACH_FROM_SCHEMA,
                     "drafts_folder": {
                         "type": "string",
                         "description": (
@@ -695,6 +753,7 @@ def get_smtp_tools() -> list[Tool]:
                             },
                         },
                     },
+                    "attach_from": _ATTACH_FROM_SCHEMA,
                     "drafts_folder": {"type": "string"},
                 },
                 "required": ["uid", "to", "subject"],
@@ -763,6 +822,7 @@ def get_smtp_tools() -> list[Tool]:
                             },
                         },
                     },
+                    "attach_from": _ATTACH_FROM_SCHEMA,
                     "drafts_folder": {"type": "string"},
                 },
                 "required": ["original_uid"],
@@ -799,6 +859,7 @@ def get_smtp_tools() -> list[Tool]:
                         "default": True,
                         "description": "Carry over the original attachments (default true)",
                     },
+                    "attach_from": _ATTACH_FROM_SCHEMA,
                     "additional_attachments": {
                         "type": "array",
                         "items": {
@@ -1203,9 +1264,16 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
     smtp_client = get_smtp_client()
 
     if name == "send_email":
-        # Parse attachments
+        # Resolve server-side attach_from references (e.g. Paperless doc IDs)
+        # into base64-encoded attachment dicts, then merge with caller-supplied
+        # inline attachments. The fetched bytes never traverse the LLM context.
+        from ..transfer import resolve_attach_from
+
+        attach_from_dicts = await resolve_attach_from(arguments.get("attach_from"))
+
+        # Parse attachments (inline base64 from caller + resolved from sources)
         attachments = []
-        for att in arguments.get("attachments", []):
+        for att in list(arguments.get("attachments", [])) + attach_from_dicts:
             attachments.append(
                 Attachment(
                     filename=att["filename"],
@@ -1277,9 +1345,22 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
         "save_forward_draft",
     ):
         from ..operations import drafts as draft_ops
+        from ..transfer import resolve_attach_from
 
         connection = imap_client._ensure_connected()
         sender = imap_client.config.user
+
+        # Resolve attach_from once per call. delete_draft has no attach_from
+        # parameter, so we skip the lookup for it. The result is the standard
+        # attachment-dict shape (base64), ready to be concatenated with the
+        # caller's inline attachments list.
+        attach_from_dicts: list[dict] = []
+        if name != "delete_draft":
+            attach_from_dicts = await resolve_attach_from(arguments.get("attach_from"))
+
+        def _merge_attachments(key: str = "attachments") -> list[dict] | None:
+            merged = list(arguments.get(key) or []) + attach_from_dicts
+            return merged or None
 
         if name == "save_draft":
             result = draft_ops.save_draft(
@@ -1291,7 +1372,7 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
                 body_html=arguments.get("body_html"),
                 cc=arguments.get("cc"),
                 bcc=arguments.get("bcc"),
-                attachments=arguments.get("attachments"),
+                attachments=_merge_attachments(),
                 drafts_folder=arguments.get("drafts_folder"),
             )
         elif name == "update_draft":
@@ -1305,7 +1386,7 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
                 body_html=arguments.get("body_html"),
                 cc=arguments.get("cc"),
                 bcc=arguments.get("bcc"),
-                attachments=arguments.get("attachments"),
+                attachments=_merge_attachments(),
                 folder=arguments.get("drafts_folder"),
             )
         elif name == "delete_draft":
@@ -1324,10 +1405,14 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
                 body_html=arguments.get("body_html"),
                 reply_all=arguments.get("reply_all", False),
                 include_quote=arguments.get("include_quote", True),
-                attachments=arguments.get("attachments"),
+                attachments=_merge_attachments(),
                 drafts_folder=arguments.get("drafts_folder"),
             )
         elif name == "save_forward_draft":
+            # For save_forward_draft, attach_from items go alongside the
+            # explicit `additional_attachments` list rather than overwriting
+            # the carried-over original attachments controlled by
+            # `forward_attachments`.
             result = draft_ops.save_forward_draft(
                 connection=connection,
                 sender=sender,
@@ -1339,7 +1424,7 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
                 body_text=arguments.get("body_text"),
                 body_html=arguments.get("body_html"),
                 forward_attachments=arguments.get("forward_attachments", True),
-                additional_attachments=arguments.get("additional_attachments"),
+                additional_attachments=_merge_attachments("additional_attachments"),
                 drafts_folder=arguments.get("drafts_folder"),
             )
         else:  # pragma: no cover - exhaustive above

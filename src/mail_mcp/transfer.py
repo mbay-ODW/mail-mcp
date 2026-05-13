@@ -225,4 +225,162 @@ async def upload_to_hero(
     }
 
 
-__all__ = ["upload_to_paperless", "upload_to_hero"]
+async def download_from_paperless(
+    doc_id: int,
+    as_original: bool = False,
+) -> dict[str, Any]:
+    """Fetch a document binary from Paperless-ngx server-to-server.
+
+    Returns a dict shaped ``{"filename", "content_type", "data"}`` (raw bytes,
+    not base64) suitable for direct attachment to an outgoing email. The
+    bytes never traverse Claude's context window.
+
+    Args:
+        doc_id: Paperless document primary key.
+        as_original: If True, fetch the originally uploaded file (e.g. the
+            raw PDF/scan as ingested). If False (default), fetch the archive
+            version – Paperless's post-OCR PDF, which is usually what you
+            want for re-sending because it's been normalized.
+
+    Raises:
+        RuntimeError: Paperless not configured.
+        httpx.HTTPStatusError: Paperless responded with a non-2xx status.
+    """
+    cfg = _get_cfg()
+    if not cfg.paperless_enabled:
+        raise RuntimeError(
+            "Paperless transfer not configured – set PAPERLESS_URL and PAPERLESS_API_KEY."
+        )
+
+    headers = {"Authorization": f"Token {cfg.paperless_api_key}"}
+    suffix = "?original=true" if as_original else ""
+    download_url = f"{cfg.paperless_url}/api/documents/{doc_id}/download/{suffix}"
+    meta_url = f"{cfg.paperless_url}/api/documents/{doc_id}/"
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        # Fetch metadata (filename + mime) in parallel-ish – cheap GETs.
+        meta_resp = await client.get(meta_url, headers=headers)
+        meta_resp.raise_for_status()
+        meta = meta_resp.json()
+
+        data_resp = await client.get(download_url, headers=headers)
+        data_resp.raise_for_status()
+
+    # Filename precedence:
+    #   1. Content-Disposition (authoritative – set by Paperless to the
+    #      filename the recipient should see).
+    #   2. original_file_name from the JSON.
+    #   3. Synthetic fallback "paperless-<id>.pdf".
+    filename = _filename_from_disposition(data_resp.headers.get("content-disposition"))
+    if not filename:
+        filename = meta.get("original_file_name") or f"paperless-{doc_id}.pdf"
+
+    content_type = (
+        data_resp.headers.get("content-type", "").split(";")[0].strip()
+        or meta.get("mime_type")
+        or "application/pdf"
+    )
+    data = data_resp.content
+
+    logging.info(
+        "Paperless download OK: doc_id=%s filename=%s size=%d original=%s",
+        doc_id,
+        filename,
+        len(data),
+        as_original,
+    )
+    return {"filename": filename, "content_type": content_type, "data": data}
+
+
+def _filename_from_disposition(header: str | None) -> str | None:
+    """Extract filename from a Content-Disposition header.
+
+    Handles both the plain ``filename="x"`` and RFC 5987 ``filename*=UTF-8''x``
+    forms. Returns ``None`` if neither is present or parsable.
+    """
+    if not header:
+        return None
+    import re
+    from urllib.parse import unquote
+
+    # RFC 5987 first – it's the more accurate form when present.
+    m = re.search(r"filename\*\s*=\s*[^']*''([^;]+)", header, re.IGNORECASE)
+    if m:
+        return unquote(m.group(1).strip().strip('"'))
+    m = re.search(r'filename\s*=\s*"?([^";]+)"?', header, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+async def resolve_attach_from(
+    items: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Resolve ``attach_from`` references into base64 attachment dicts.
+
+    Input shape (per item)::
+
+        {"source": "paperless", "id": 1234, "filename": "optional override",
+         "as_original": false}
+
+    Output shape (per item, matches existing ``attachments`` schema)::
+
+        {"filename": "...", "content_type": "...", "data_base64": "..."}
+
+    Bytes are downloaded directly from the source service – Paperless today,
+    HERO later – and never round-trip through Claude's context. Returns an
+    empty list if ``items`` is None/empty so callers can blindly extend their
+    existing attachments list.
+    """
+    if not items:
+        return []
+
+    import base64 as _b64
+
+    resolved: list[dict[str, Any]] = []
+    for entry in items:
+        source = (entry.get("source") or "").lower()
+        if source == "paperless":
+            doc_id_raw = entry.get("id")
+            if doc_id_raw is None:
+                raise ValueError("attach_from[paperless]: 'id' is required")
+            try:
+                doc_id = int(doc_id_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"attach_from[paperless]: 'id' must be numeric, got {doc_id_raw!r}"
+                ) from exc
+            doc = await download_from_paperless(
+                doc_id=doc_id,
+                as_original=bool(entry.get("as_original", False)),
+            )
+            override = entry.get("filename")
+            resolved.append(
+                {
+                    "filename": override or doc["filename"],
+                    "content_type": doc["content_type"],
+                    "data_base64": _b64.b64encode(doc["data"]).decode("ascii"),
+                }
+            )
+        elif source == "hero":
+            # HERO does not currently expose a documented document-download
+            # endpoint via GraphQL or REST. Once HERO support confirms the
+            # right endpoint (see support email thread 2026-05-06) we can
+            # add a `download_from_hero` counterpart here. Until then this
+            # raises so the caller gets a clear, non-silent failure.
+            raise NotImplementedError(
+                "attach_from[hero]: server-side download from HERO is not yet "
+                "supported. Open a ticket with HERO support to confirm the "
+                "document-download endpoint, then extend transfer.py."
+            )
+        else:
+            raise ValueError(f"attach_from: unknown source {source!r}. Supported: 'paperless'.")
+    return resolved
+
+
+__all__ = [
+    "upload_to_paperless",
+    "upload_to_hero",
+    "download_from_paperless",
+    "resolve_attach_from",
+]
