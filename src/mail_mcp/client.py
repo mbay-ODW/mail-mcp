@@ -53,9 +53,17 @@ class IMAPClient:
             self._connection_plain = None
 
     def _ensure_connected(self) -> imaplib.IMAP4:
-        """Ensure connection is active."""
+        """Ensure connection is active, reconnecting if the socket is stale."""
         if self._connection is None:
             self.connect()
+        else:
+            try:
+                # NOOP is a lightweight keepalive — if the socket is dead it
+                # raises an exception and we reconnect transparently.
+                self._connection.noop()
+            except Exception:
+                self.disconnect()
+                self.connect()
         return self._connection
 
     def _check_status(self, status: Any, data: Any, context: str) -> None:

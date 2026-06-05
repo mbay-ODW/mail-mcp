@@ -61,7 +61,7 @@ class EmailSyncer:
 
     def _sync_all(self) -> None:
         # Import here to avoid circular imports at module load time
-        from ..client import get_imap_client
+        from ..client import get_imap_client, reset_imap_client
 
         try:
             client = get_imap_client()
@@ -77,6 +77,12 @@ class EmailSyncer:
         except Exception as exc:
             self._last_error = str(exc)
             logging.error("EmailSyncer._sync_all error: %s", exc)
+            # Reset the stale IMAP connection so the next sync cycle
+            # creates a fresh connection instead of reusing a dead one.
+            try:
+                reset_imap_client()
+            except Exception:
+                pass
 
     def _sync_folder(self, client, folder: str) -> None:
         from ..client import get_imap_client  # noqa: F401 (kept for type clarity)
