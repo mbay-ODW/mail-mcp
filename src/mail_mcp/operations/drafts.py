@@ -318,6 +318,27 @@ def update_draft(
 # -----------------------------------------------------------------------------
 
 
+def _decode_subject(subject: str) -> str:
+    """Decode an RFC 2047 encoded-word subject to plain Unicode.
+
+    Outlook & friends send umlaut subjects as ``=?utf-8?B?...?=``. Without
+    decoding, prepending ``Re:``/``Fwd:`` would yield a literal
+    ``Re: =?utf-8?B?...?=`` in the draft. ``decode_header`` handles both
+    encoded and plain subjects, including mixed runs of encoded words.
+    """
+    if not subject:
+        return subject
+    from email.header import decode_header
+
+    parts: list[str] = []
+    for chunk, charset in decode_header(subject):
+        if isinstance(chunk, bytes):
+            parts.append(chunk.decode(charset or "utf-8", errors="replace"))
+        else:
+            parts.append(chunk)
+    return "".join(parts)
+
+
 def _strip_re_prefix(subject: str) -> str:
     """Collapse leading ``Re: Re: …`` to a single ``Re:`` for dedup."""
     return re.sub(r"^(?:re:\s*)+", "", subject, flags=re.IGNORECASE).strip()
@@ -417,7 +438,7 @@ def save_reply_draft(
         raise ValueError("body_text or body_html is required")
 
     original = _fetch_original_raw(connection, original_folder, original_uid)
-    orig_subject = original.get("Subject", "")
+    orig_subject = _decode_subject(original.get("Subject", ""))
     subject = "Re: " + _strip_re_prefix(orig_subject) if orig_subject else "Re: (no subject)"
 
     # Recipients: To = original Reply-To/From, Cc = original To+Cc minus our own address (if reply_all).
@@ -489,7 +510,7 @@ def save_forward_draft(
     """Save a forwarded copy of an existing email as a draft."""
     original = _fetch_original_raw(connection, original_folder, original_uid)
 
-    orig_subject = original.get("Subject", "")
+    orig_subject = _decode_subject(original.get("Subject", ""))
     subject = "Fwd: " + _strip_fwd_prefix(orig_subject) if orig_subject else "Fwd: (no subject)"
 
     # Build forwarded text – preface + RFC 5322 quoting of the original.
