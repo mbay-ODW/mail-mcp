@@ -1,5 +1,6 @@
 """Email Message Building Utilities"""
 
+from email.charset import QP, Charset
 from email.header import Header
 from email.message import Message
 from email.mime.application import MIMEApplication
@@ -8,6 +9,33 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from .. import Attachment
+
+
+def _utf8_qp_charset() -> Charset:
+    """A utf-8 charset that encodes the body as *quoted-printable*.
+
+    Python's ``MIMEText(..., 'utf-8')`` defaults to base64 for the body.
+    Human mail clients (Spark/Readdle, Apple Mail, Thunderbird) use
+    quoted-printable for text parts. Spark's *draft editor* mis-segments a
+    base64 text body (it swallows the leading short paragraphs, e.g. the
+    salutation) even though the preview renders fine; a quoted-printable
+    part — byte-compatible with what Spark itself emits — displays
+    correctly. See the Spark reference message structure in the repo notes.
+    """
+    cs = Charset("utf-8")
+    cs.body_encoding = QP
+    return cs
+
+
+def _text_part(text: str, subtype: str) -> MIMEText:
+    """Build a text/<subtype> part as quoted-printable + inline disposition.
+
+    Mirrors how Spark encodes its own parts (``Content-Transfer-Encoding:
+    quoted-printable`` + ``Content-Disposition: inline``).
+    """
+    part = MIMEText(text, subtype, _utf8_qp_charset())
+    part.add_header("Content-Disposition", "inline")
+    return part
 
 
 def build_email_message(
@@ -90,13 +118,14 @@ def build_message(
         on content).
     """
     # 1) Body: alternative only when an HTML part exists, otherwise a bare
-    #    text/plain. (No body at all → empty text/plain.)
+    #    text/plain. (No body at all → empty text/plain.) Parts are encoded
+    #    quoted-printable + inline to match what Spark's editor expects.
     if body_html:
         body: Message = MIMEMultipart("alternative")
-        body.attach(MIMEText(body_text or "", "plain", "utf-8"))
-        body.attach(MIMEText(body_html, "html", "utf-8"))
+        body.attach(_text_part(body_text or "", "plain"))
+        body.attach(_text_part(body_html, "html"))
     else:
-        body = MIMEText(body_text or "", "plain", "utf-8")
+        body = _text_part(body_text or "", "plain")
 
     # 2) Wrap in multipart/mixed ONLY when there are real attachments.
     if attachments:

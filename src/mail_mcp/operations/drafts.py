@@ -222,7 +222,11 @@ def save_draft(
                 msg[k] = v
     _attach_message_id_and_date(msg, sender)
 
-    raw = msg.as_bytes()
+    # IMAP messages must use CRLF line endings (RFC 3501). Python's
+    # compat32 generator emits bare LF, which – together with base64 – made
+    # Spark's draft editor mis-segment the body. Normalise to CRLF so the
+    # stored draft is byte-compatible with a Spark-composed message.
+    raw = re.sub(rb"\r?\n", b"\r\n", msg.as_bytes())
     result = append_with_uid(
         connection,
         folder,

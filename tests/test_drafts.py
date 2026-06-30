@@ -190,10 +190,12 @@ def test_save_draft_appends_with_draft_flag_and_returns_uid():
     # as RFC 2047 encoded-word (`=?utf-8?q?Hallo?=`), the literal text
     # "Hallo" still appears inside the encoded segment though.
     assert b"Subject:" in body_arg and b"Hallo" in body_arg
-    # Body text is base64-encoded inside the MIME part.
-    import base64
-
-    assert base64.b64encode(b"Hi Alice") in body_arg
+    # Body text is quoted-printable inside the MIME part (ASCII passes
+    # through verbatim), so the literal text appears in the raw bytes.
+    assert b"Hi Alice" in body_arg
+    assert b"quoted-printable" in body_arg
+    # IMAP requires CRLF line endings.
+    assert b"\r\n" in body_arg
     # Recipient + sender end up in the headers.
     assert b"alice@example.com" in body_arg
     assert b"me@example.com" in body_arg
