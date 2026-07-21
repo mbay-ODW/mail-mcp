@@ -28,19 +28,61 @@ class SendResult:
     rejected: list[str] | None = None
 
 
-def _get_smtp_client(client) -> smtplib.SMTP:
-    """从 SMTPClient 获取原生 SMTP 连接"""
-    if hasattr(client, "_connection"):
-        return client._connection
-    elif hasattr(client, "connection"):
-        return client.connection
-    elif hasattr(client, "smtp"):
-        return client.smtp
-    elif hasattr(client, "_smtp"):
-        return client._smtp
-    else:
-        # 尝试直接使用
-        return client
+def _get_smtp_client(client) -> smtplib.SMTP | None:
+    """获取一个**存活的** SMTP 连接。
+
+    优先走 ``SMTPClient._ensure_connected()``：它会先 NOOP 探活，socket
+    已断开时自动重连。直接取缓存的 ``_connection`` 是不够的——邮件服务商
+    会掐掉空闲连接，之后每次发送都会抛 smtplib 的
+    "please run connect() first"，直到容器重启为止。
+    """
+    ensure = getattr(client, "_ensure_connected", None)
+    if callable(ensure):
+        return ensure()
+
+    for attr in ("_connection", "connection", "smtp", "_smtp"):
+        conn = getattr(client, attr, None)
+        if conn is not None:
+            return conn
+    # 尝试直接使用
+    return client
+
+
+def _reconnect_smtp(client) -> smtplib.SMTP | None:
+    """丢弃陈旧连接并重新建立 SMTP 连接。"""
+    disconnect = getattr(client, "disconnect", None)
+    if callable(disconnect):
+        try:
+            disconnect()
+        except Exception:
+            pass
+
+    connect = getattr(client, "connect", None)
+    if callable(connect):
+        connect()
+        return _get_smtp_client(client)
+    return None
+
+
+def _send_message(client, message, from_addr: str | None, to_addrs: list[str]) -> None:
+    """发送邮件，并在连接失效时自动重连重试一次。
+
+    即使先探活过，socket 仍可能在探活和发送之间被掐断，所以这里再兜一层
+    ``SMTPServerDisconnected`` 重试。
+    """
+    smtp = _get_smtp_client(client)
+    if smtp is None:
+        smtp = _reconnect_smtp(client)
+    if smtp is None:
+        raise smtplib.SMTPException("无法获取 SMTP 连接")
+
+    try:
+        smtp.send_message(message, from_addr=from_addr, to_addrs=to_addrs)
+    except smtplib.SMTPServerDisconnected:
+        smtp = _reconnect_smtp(client)
+        if smtp is None:
+            raise
+        smtp.send_message(message, from_addr=from_addr, to_addrs=to_addrs)
 
 
 def send_email(
@@ -127,20 +169,8 @@ def send_email(
         if bcc:
             all_recipients.extend(bcc)
 
-        # 4. 发送邮件
-        smtp = _get_smtp_client(client)
-
-        # 确保连接已建立
-        if smtp is None:
-            # 尝试连接
-            if hasattr(client, "connect"):
-                client.connect()
-                smtp = _get_smtp_client(client)
-
-        if smtp is None:
-            return SendResult(success=False, error="无法获取 SMTP 连接")
-
-        smtp.send_message(message, from_addr=from_addr, to_addrs=all_recipients)
+        # 4. 发送邮件（连接失效时自动重连）
+        _send_message(client, message, from_addr=from_addr, to_addrs=all_recipients)
 
         return SendResult(success=True, message_id=message_id, rejected=None)
 
@@ -273,9 +303,8 @@ def send_reply(
         message_id = make_msgid()
         message["Message-ID"] = message_id
 
-        # 发送邮件
-        smtp = _get_smtp_client(client)
-        smtp.send_message(message, from_addr=from_addr, to_addrs=to)
+        # 发送邮件（连接失效时自动重连）
+        _send_message(client, message, from_addr=from_addr, to_addrs=to)
 
         return SendResult(
             success=True,
@@ -402,9 +431,8 @@ def send_forward(
         message_id = make_msgid()
         message["Message-ID"] = message_id
 
-        # 发送邮件
-        smtp = _get_smtp_client(client)
-        smtp.send_message(message, from_addr=from_addr, to_addrs=to)
+        # 发送邮件（连接失效时自动重连）
+        _send_message(client, message, from_addr=from_addr, to_addrs=to)
 
         return SendResult(
             success=True,
