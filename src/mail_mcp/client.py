@@ -413,23 +413,32 @@ class IMAPClient:
         raise Exception(f"No attachment {target} found in email UID {uid}")
 
     def _get_uid(self, msg_data: Any) -> str | None:
-        """Extract UID from message data."""
+        """Extract the UID from a FETCH response.
+
+        The UID lives in the metadata **prefix** (``item[0]``), e.g.
+        ``b'123 (UID 7778 FLAGS (\\Seen) BODY[] {456}'`` — NOT in ``item[1]``,
+        which is the raw RFC822 message. Returning ``item[1]`` put the whole
+        raw email into the ``uid`` field.
+        """
         for item in msg_data:
-            if isinstance(item, tuple):
-                if b"UID" in item[0]:
-                    return item[1].decode() if isinstance(item[1], bytes) else str(item[1])
+            if isinstance(item, tuple) and item and item[0]:
+                m = re.search(rb"\bUID\s+(\d+)", item[0])
+                if m:
+                    return m.group(1).decode()
         return None
 
     def _parse_flags(self, msg_data: Any) -> list[str]:
-        """Parse flags from message data."""
+        """Parse the flag list from a FETCH response.
+
+        Flags live in the metadata **prefix** (``item[0]``), inside
+        ``FLAGS (…)`` — e.g. ``FLAGS (\\Seen \\Flagged)``. The previous code
+        read ``item[1]`` (the raw message) and tokenised its header text.
+        """
         for item in msg_data:
-            if isinstance(item, tuple):
-                if b"FLAGS" in item[0]:
-                    flags_bytes = item[1]
-                    if isinstance(flags_bytes, bytes):
-                        flags_str = flags_bytes.decode()
-                        return flags_str.strip("()").split()
-                    return []
+            if isinstance(item, tuple) and item and item[0]:
+                m = re.search(rb"\bFLAGS\s+\(([^)]*)\)", item[0])
+                if m:
+                    return m.group(1).decode().split()
         return []
 
     def _get_part_content(self, part) -> str:
