@@ -481,6 +481,22 @@ class IMAPClient:
         """Unmark email as flagged."""
         return self._set_flag(folder, message_id, uid, "-FLAGS", "\\Flagged")
 
+    @staticmethod
+    def _messageset(uid: str | int | None, message_id: str | int | None) -> tuple[str, bool]:
+        """Return ``(target, by_uid)`` for an IMAP command.
+
+        imaplib's ``conn.store``/``conn.copy`` are *sequence-number*
+        commands; a UID must instead be issued via ``conn.uid("STORE", …)``
+        (→ ``UID STORE <uid> …``). Passing ``"UID <n>"`` to the sequence
+        command makes the server read ``UID`` as the message set and reply
+        ``BAD … Invalid messageset``.
+        """
+        if uid is not None:
+            return str(uid), True
+        if message_id is not None:
+            return str(message_id), False
+        raise Exception("Either uid or message_id is required")
+
     def _set_flag(
         self,
         folder: str,
@@ -493,12 +509,11 @@ class IMAPClient:
         conn = self._ensure_connected()
         conn.select(folder)
 
-        if uid:
-            query = f"UID {uid}"
+        target, by_uid = self._messageset(uid, message_id)
+        if by_uid:
+            status, data = conn.uid("STORE", target, mode, flag)
         else:
-            query = message_id
-
-        status, data = conn.store(query, mode, flag)
+            status, data = conn.store(target, mode, flag)
         self._check_status(status, data, "Failed to set flag")
 
         return {
@@ -522,13 +537,17 @@ class IMAPClient:
         conn = self._ensure_connected()
         conn.select(source_folder)
 
-        if uid:
-            query = f"UID {uid}"
+        target, by_uid = self._messageset(uid, message_id)
+        if by_uid:
+            # RFC 6851 UID MOVE (imaplib has no .move()).
+            status, data = conn.uid("MOVE", target, target_folder)
+            self._check_status(status, data, "Failed to move email")
         else:
-            query = message_id
-
-        status, data = conn.move(query, target_folder)
-        self._check_status(status, data, "Failed to move email")
+            # No sequence-number MOVE in imaplib → emulate COPY + delete.
+            status, data = conn.copy(target, target_folder)
+            self._check_status(status, data, "Failed to move email")
+            conn.store(target, "+FLAGS", "\\Deleted")
+            conn.expunge()
 
         return {
             "success": True,
@@ -549,12 +568,11 @@ class IMAPClient:
         conn = self._ensure_connected()
         conn.select(source_folder)
 
-        if uid:
-            query = f"UID {uid}"
+        target, by_uid = self._messageset(uid, message_id)
+        if by_uid:
+            status, data = conn.uid("COPY", target, target_folder)
         else:
-            query = message_id
-
-        status, data = conn.copy(query, target_folder)
+            status, data = conn.copy(target, target_folder)
         self._check_status(status, data, "Failed to copy email")
 
         return {
@@ -575,12 +593,11 @@ class IMAPClient:
         conn = self._ensure_connected()
         conn.select(folder)
 
-        if uid:
-            query = f"UID {uid}"
+        target, by_uid = self._messageset(uid, message_id)
+        if by_uid:
+            status, data = conn.uid("STORE", target, "+FLAGS", "\\Deleted")
         else:
-            query = message_id
-
-        status, data = conn.store(query, "+FLAGS", "\\Deleted")
+            status, data = conn.store(target, "+FLAGS", "\\Deleted")
         self._check_status(status, data, "Failed to delete email")
 
         # Expunge to permanently delete
