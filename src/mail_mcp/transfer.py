@@ -157,7 +157,9 @@ async def upload_to_hero(
         )
         resp.raise_for_status()
         upload_resp = resp.json()
-    uuid = upload_resp.get("uuid")
+    # HERO antwortet {"status": "success", "data": {"uuid": ...}} – die uuid
+    # liegt unter data.uuid, NICHT auf Top-Level. Fallback auf Top-Level.
+    uuid = (upload_resp.get("data") or {}).get("uuid") or upload_resp.get("uuid")
     if not uuid:
         raise RuntimeError(f"HERO file-uploads response missing 'uuid' field: {upload_resp}")
     logging.info(
