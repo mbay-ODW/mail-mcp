@@ -123,6 +123,7 @@ async def upload_to_hero(
     content_type: str,
     project_id: str,
     category: str | None = None,  # kept for backwards compat; unused
+    document_type_id: int = 551120,  # 551120 = "Allgemein" (base_type generic)
 ) -> dict[str, Any]:
     """Upload attachment to a HERO project_match using HERO's two-step flow.
 
@@ -177,10 +178,17 @@ async def upload_to_hero(
             f"project_id must be numeric (project_match.id), got: {project_id!r}"
         ) from e
 
+    # upload_document verlangt ein document_type_id (sonst 422
+    # "document_type_id: Dieses Feld ist erforderlich"). Default 551120 =
+    # "Allgemein" (base_type generic).
     mutation = """
-    mutation UploadDocument($uuid: String!, $projectId: Int!) {
+    mutation UploadDocument($uuid: String!, $projectId: Int!, $docTypeId: Int!) {
       upload_document(
-        document: { project_match_id: $projectId, type: "file_upload" }
+        document: {
+          project_match_id: $projectId
+          type: "file_upload"
+          document_type_id: $docTypeId
+        }
         file_upload_uuid: $uuid
         target: project_match
         target_id: $projectId
@@ -193,7 +201,11 @@ async def upload_to_hero(
     """
     payload = {
         "query": mutation,
-        "variables": {"uuid": uuid, "projectId": project_id_int},
+        "variables": {
+            "uuid": uuid,
+            "projectId": project_id_int,
+            "docTypeId": int(document_type_id),
+        },
     }
     # GraphQL endpoint uses Bearer auth (different from upload above).
     graphql_headers = {
