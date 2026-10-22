@@ -9,7 +9,8 @@ from ..client import get_imap_client
 from ..config import TransferConfig
 from ..db import get_email_store
 from ..smtp import Attachment, get_smtp_client
-from ..smtp.operations import send_email, send_forward, send_reply
+from ..smtp.operations import send_prepared
+from ..smtp.operations.send import _send_message
 
 _DB_ENABLED = os.getenv("EMAIL_DB_ENABLED", "false").lower() == "true"
 _transfer_cfg = TransferConfig.from_env()
@@ -29,22 +30,30 @@ _ATTACH_FROM_SCHEMA: dict = {
         "properties": {
             "source": {
                 "type": "string",
-                "enum": ["paperless"],
+                "enum": ["paperless", "nextcloud", "url"],
                 "description": (
-                    "Source system holding the document. Currently only "
-                    "'paperless' is wired up; 'hero' is reserved for future use."
+                    "'paperless' (needs id), 'nextcloud' (needs path, relative to "
+                    "the Nextcloud user's root, e.g. 'Projekte/1105 - Kunde/FUE.pdf') "
+                    "or 'url' (needs a public https url)."
                 ),
             },
             "id": {
                 "type": "integer",
-                "description": "Document primary key in the source system.",
+                "description": "paperless: document primary key.",
+            },
+            "path": {
+                "type": "string",
+                "description": "nextcloud: file path relative to the user's root.",
+            },
+            "url": {
+                "type": "string",
+                "description": "url: https link the server downloads (e.g. a share link).",
             },
             "filename": {
                 "type": "string",
                 "description": (
-                    "Optional filename override. Defaults to the filename "
-                    "stored in the source system (e.g. Paperless's "
-                    "original_file_name or Content-Disposition)."
+                    "Optional filename override. Defaults to the source's filename "
+                    "(Paperless original_file_name, Nextcloud basename, URL path)."
                 ),
             },
             "as_original": {
@@ -56,15 +65,45 @@ _ATTACH_FROM_SCHEMA: dict = {
                 ),
             },
         },
-        "required": ["source", "id"],
+        "required": ["source"],
     },
     "description": (
-        "References to documents in external systems (Paperless-ngx). The "
-        "server downloads each one directly and attaches it as a normal "
-        "MIME attachment – no binary data passes through the LLM context, "
-        "and recipients do not need access to the source system."
+        "Files to attach from Paperless-ngx, Nextcloud or an https URL. The "
+        "server downloads each one directly and attaches it as a normal MIME "
+        "attachment – no binary data passes through the LLM context. Total "
+        "size is limited (ATTACH_FROM_MAX_MB, default 20 MB)."
     ),
 }
+
+_SIGNATURE_PROP: dict = {
+    "type": "boolean",
+    "default": True,
+    "description": (
+        "Append the configured signature (server-side; do NOT write your own "
+        "signature into the body). Skipped automatically if the body already "
+        "contains it. Set false for no signature."
+    ),
+}
+
+_ATTACHMENTS_PROP: dict = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "filename": {"type": "string"},
+            "content_type": {"type": "string"},
+            "data_base64": {"type": "string"},
+        },
+    },
+    "description": "Attachments (base64 encoded). Prefer attach_from for files over a few KB.",
+}
+
+_BODY_HINT = (
+    " Body layout follows Spark: body → signature → quoted original, in both "
+    "the text and the HTML part. body_html may be plain <div> lines; the "
+    "server wraps it into a full HTML document. If only body_text is given, "
+    "an HTML part is generated when a signature or quote needs it."
+)
 
 
 def _db_search(store, criteria: str, folder: str, limit: int) -> list[dict] | None:
@@ -537,9 +576,9 @@ def get_smtp_tools() -> list[Tool]:
             name="send_email",
             description=(
                 "Send an email with optional HTML body and attachments. "
-                "Use `attach_from` to attach documents stored in Paperless-ngx "
-                "by ID – the server fetches the binary directly so no bytes "
-                "pass through the LLM context."
+                "Use `attach_from` to attach files from Paperless-ngx, Nextcloud "
+                "or an https URL – the server fetches the binary directly so no "
+                "bytes pass through the LLM context." + _BODY_HINT
             ),
             inputSchema={
                 "type": "object",
@@ -571,62 +610,70 @@ def get_smtp_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "BCC recipients",
                     },
-                    "attachments": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "filename": {"type": "string"},
-                                "content_type": {"type": "string"},
-                                "data_base64": {"type": "string"},
-                            },
-                        },
-                        "description": "Attachments (base64 encoded)",
-                    },
+                    "attachments": _ATTACHMENTS_PROP,
                     "attach_from": _ATTACH_FROM_SCHEMA,
+                    "signature": _SIGNATURE_PROP,
                 },
                 "required": ["to", "subject"],
             },
         ),
         Tool(
             name="send_reply",
-            description="Reply to an email",
+            description=(
+                "Reply to an email and SEND it immediately. Threaded via "
+                "In-Reply-To/References; recipients and 'Re:' subject are taken "
+                "from the original unless overridden. Identify the original by "
+                "original_uid (preferred) or reply_to_message_id." + _BODY_HINT
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "to": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Recipient email addresses",
+                    "original_uid": {
+                        "type": "integer",
+                        "description": "UID of the email being replied to",
                     },
-                    "subject": {
+                    "original_folder": {
                         "type": "string",
-                        "description": "Reply subject (usually with Re:)",
-                    },
-                    "body_text": {
-                        "type": "string",
-                        "description": "Reply body text",
-                    },
-                    "body_html": {
-                        "type": "string",
-                        "description": "Reply body HTML",
+                        "description": "Folder containing the original (default: INBOX)",
+                        "default": "INBOX",
                     },
                     "reply_to_message_id": {
                         "type": "string",
-                        "description": "Original message ID to reply to",
+                        "description": "Alternative to original_uid: Message-ID of the original",
+                    },
+                    "body_text": {"type": "string", "description": "Reply body text"},
+                    "body_html": {"type": "string", "description": "Reply body HTML"},
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Override recipients (default: Reply-To/From of original)",
+                    },
+                    "cc": {"type": "array", "items": {"type": "string"}},
+                    "reply_all": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, includes original To+Cc as Cc (minus self)",
                     },
                     "quote_original": {
                         "type": "boolean",
                         "description": "Quote original message (default: true)",
                         "default": True,
                     },
+                    "signature": _SIGNATURE_PROP,
+                    "attachments": _ATTACHMENTS_PROP,
+                    "attach_from": _ATTACH_FROM_SCHEMA,
                 },
-                "required": ["to", "subject", "reply_to_message_id"],
+                "required": [],
             },
         ),
         Tool(
             name="send_forward",
-            description="Forward an email to another recipient",
+            description=(
+                "Forward an email and SEND it immediately. Original headers and "
+                "body are quoted, original attachments carried over by default. "
+                "Identify the original by original_uid (preferred) or "
+                "original_message_id." + _BODY_HINT
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -635,18 +682,18 @@ def get_smtp_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "Forward recipient addresses",
                     },
-                    "subject": {
-                        "type": "string",
-                        "description": "Forward subject (usually with Fwd:)",
-                    },
+                    "original_uid": {"type": "integer"},
                     "original_folder": {
                         "type": "string",
-                        "description": "Folder of original email (optional, if fetching original)",
+                        "description": "Folder of original email (default: INBOX)",
+                        "default": "INBOX",
                     },
                     "original_message_id": {
                         "type": "string",
-                        "description": "Message ID of email to forward (optional, if fetching original)",
+                        "description": "Alternative to original_uid: Message-ID of the original",
                     },
+                    "cc": {"type": "array", "items": {"type": "string"}},
+                    "bcc": {"type": "array", "items": {"type": "string"}},
                     "body_text": {
                         "type": "string",
                         "description": "Additional comment for forward",
@@ -655,8 +702,34 @@ def get_smtp_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Additional HTML comment for forward",
                     },
+                    "forward_attachments": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Carry over the original attachments (default true)",
+                    },
+                    "signature": _SIGNATURE_PROP,
+                    "attachments": _ATTACHMENTS_PROP,
+                    "attach_from": _ATTACH_FROM_SCHEMA,
                 },
-                "required": ["to", "subject"],
+                "required": ["to"],
+            },
+        ),
+        Tool(
+            name="send_draft",
+            description=(
+                "Send an existing draft by UID exactly as stored (after review), "
+                "file a copy in the Sent folder and delete the draft."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "integer", "description": "UID of the draft"},
+                    "drafts_folder": {
+                        "type": "string",
+                        "description": "Folder containing the draft (default: auto-detected)",
+                    },
+                },
+                "required": ["uid"],
             },
         ),
         # ------------------------------------------------------------------
@@ -671,7 +744,7 @@ def get_smtp_tools() -> list[Tool]:
                 "Save an email as a DRAFT in the IMAP Drafts folder (no send). "
                 "Mirror of send_email – returns the new draft's UID + folder. "
                 "Drafts folder is auto-detected via SPECIAL-USE; override with "
-                "drafts_folder if your server doesn't advertise it."
+                "drafts_folder if your server doesn't advertise it." + _BODY_HINT
             ),
             inputSchema={
                 "type": "object",
@@ -694,19 +767,9 @@ def get_smtp_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "BCC recipients",
                     },
-                    "attachments": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "filename": {"type": "string"},
-                                "content_type": {"type": "string"},
-                                "data_base64": {"type": "string"},
-                            },
-                        },
-                        "description": "Attachments (base64 encoded)",
-                    },
+                    "attachments": _ATTACHMENTS_PROP,
                     "attach_from": _ATTACH_FROM_SCHEMA,
+                    "signature": _SIGNATURE_PROP,
                     "drafts_folder": {
                         "type": "string",
                         "description": (
@@ -742,18 +805,9 @@ def get_smtp_tools() -> list[Tool]:
                     "body_html": {"type": "string"},
                     "cc": {"type": "array", "items": {"type": "string"}},
                     "bcc": {"type": "array", "items": {"type": "string"}},
-                    "attachments": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "filename": {"type": "string"},
-                                "content_type": {"type": "string"},
-                                "data_base64": {"type": "string"},
-                            },
-                        },
-                    },
+                    "attachments": _ATTACHMENTS_PROP,
                     "attach_from": _ATTACH_FROM_SCHEMA,
+                    "signature": _SIGNATURE_PROP,
                     "drafts_folder": {"type": "string"},
                 },
                 "required": ["uid", "to", "subject"],
@@ -785,7 +839,8 @@ def get_smtp_tools() -> list[Tool]:
                 "Sets In-Reply-To + References from the original message and "
                 "prepends 'Re:' to the subject (deduplicating 'Re: Re:'). "
                 "If reply_all=true, copies the original To+Cc to Cc (minus "
-                "the user's own address)."
+                "the user's own address). The quote goes into the text AND "
+                "the HTML part." + _BODY_HINT
             ),
             inputSchema={
                 "type": "object",
@@ -811,18 +866,9 @@ def get_smtp_tools() -> list[Tool]:
                         "default": True,
                         "description": "If true, append a quoted copy of the original body",
                     },
-                    "attachments": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "filename": {"type": "string"},
-                                "content_type": {"type": "string"},
-                                "data_base64": {"type": "string"},
-                            },
-                        },
-                    },
+                    "attachments": _ATTACHMENTS_PROP,
                     "attach_from": _ATTACH_FROM_SCHEMA,
+                    "signature": _SIGNATURE_PROP,
                     "drafts_folder": {"type": "string"},
                 },
                 "required": ["original_uid"],
@@ -835,7 +881,7 @@ def get_smtp_tools() -> list[Tool]:
                 "prefixed with 'Fwd:' and the original headers + body are "
                 "embedded as a quoted block. By default the original "
                 "attachments are carried over – set forward_attachments=false "
-                "to drop them."
+                "to drop them." + _BODY_HINT
             ),
             inputSchema={
                 "type": "object",
@@ -860,6 +906,7 @@ def get_smtp_tools() -> list[Tool]:
                         "description": "Carry over the original attachments (default true)",
                     },
                     "attach_from": _ATTACH_FROM_SCHEMA,
+                    "signature": _SIGNATURE_PROP,
                     "additional_attachments": {
                         "type": "array",
                         "items": {
@@ -1263,73 +1310,144 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
     imap_client = get_imap_client()
     smtp_client = get_smtp_client()
 
-    if name == "send_email":
-        # Resolve server-side attach_from references (e.g. Paperless doc IDs)
-        # into base64-encoded attachment dicts, then merge with caller-supplied
-        # inline attachments. The fetched bytes never traverse the LLM context.
-        from ..transfer import resolve_attach_from
+    from .. import compose
+    from ..operations import drafts as draft_ops
+    from ..transfer import resolve_attach_from
 
-        attach_from_dicts = await resolve_attach_from(arguments.get("attach_from"))
+    cfg = compose.get_compose_config()
+    sender = imap_client.config.user
+    sender_name = cfg.from_name or None
+    signature = bool(arguments.get("signature", True))
 
-        # Parse attachments (inline base64 from caller + resolved from sources)
-        attachments = []
-        for att in list(arguments.get("attachments", [])) + attach_from_dicts:
-            attachments.append(
-                Attachment(
-                    filename=att["filename"],
-                    content_type=att.get("content_type", "application/octet-stream"),
-                    data=base64.b64decode(att["data_base64"]),
-                )
+    async def _attachment_dicts(key: str = "attachments") -> list[dict] | None:
+        # attach_from references (Paperless / Nextcloud / URL) are fetched
+        # server-side and merged with the caller's inline base64 list.
+        merged = list(arguments.get(key) or []) + await resolve_attach_from(
+            arguments.get("attach_from")
+        )
+        return merged or None
+
+    def _to_attachments(dicts: list[dict] | None) -> list[Attachment] | None:
+        if not dicts:
+            return None
+        return [
+            Attachment(
+                filename=att["filename"],
+                content_type=att.get("content_type", "application/octet-stream"),
+                data=base64.b64decode(att["data_base64"]),
             )
+            for att in dicts
+        ]
 
-        result = send_email(
-            client=smtp_client,
-            to=arguments["to"],
-            subject=arguments["subject"],
-            body_text=arguments.get("body_text"),
-            body_html=arguments.get("body_html"),
-            cc=arguments.get("cc"),
-            bcc=arguments.get("bcc"),
-            attachments=attachments if attachments else None,
+    def _send(composed: compose.Composed) -> list[TextContent]:
+        result, _message = send_prepared(
+            smtp_client,
+            sender=sender,
+            sender_name=sender_name,
+            to=composed.to,
+            cc=composed.cc,
+            bcc=composed.bcc,
+            subject=composed.subject,
+            body_text=composed.body_text,
+            body_html=composed.body_html,
+            attachments=_to_attachments(composed.attachments),
+            headers=composed.headers,
         )
         return [TextContent(type="text", text=str(result))]
+
+    def _original(uid_key: str, mid_key: str):
+        connection = imap_client._ensure_connected()
+        folder = arguments.get("original_folder") or "INBOX"
+        uid = arguments.get(uid_key)
+        if uid is None:
+            mid = arguments.get(mid_key)
+            if not mid:
+                raise ValueError(f"{uid_key} or {mid_key} is required")
+            uid = compose.find_uid_by_message_id(connection, folder, mid)
+        return compose.fetch_original(connection, folder, int(uid))
+
+    if name == "send_email":
+        if not arguments.get("body_text") and not arguments.get("body_html"):
+            raise ValueError("body_text or body_html is required")
+        text, html = compose.assemble_bodies(
+            arguments.get("body_text"), arguments.get("body_html"), signature=signature, cfg=cfg
+        )
+        return _send(
+            compose.Composed(
+                to=arguments["to"],
+                cc=arguments.get("cc"),
+                bcc=arguments.get("bcc"),
+                subject=arguments["subject"],
+                body_text=text,
+                body_html=html,
+                attachments=await _attachment_dicts(),
+            )
+        )
 
     elif name == "send_reply":
-        result = send_reply(
-            client=smtp_client,
-            to=arguments["to"],
-            subject=arguments["subject"],
-            body_text=arguments.get("body_text"),
-            body_html=arguments.get("body_html"),
-            reply_to_message_id=arguments.get("reply_to_message_id"),
-            quote_original=arguments.get("quote_original", True),
+        original = _original("original_uid", "reply_to_message_id")
+        return _send(
+            compose.compose_reply(
+                original,
+                own_address=sender,
+                body_text=arguments.get("body_text"),
+                body_html=arguments.get("body_html"),
+                reply_all=arguments.get("reply_all", False),
+                include_quote=arguments.get("quote_original", True),
+                signature=signature,
+                to=arguments.get("to"),
+                cc=arguments.get("cc"),
+                attachments=await _attachment_dicts(),
+                cfg=cfg,
+            )
         )
-        return [TextContent(type="text", text=str(result))]
 
     elif name == "send_forward":
-        # Optionally fetch original email if folder and message_id provided
-        original_email_data = None
-        folder = arguments.get("original_folder")
-        msg_id = arguments.get("original_message_id")
-
-        if folder and msg_id:
-            try:
-                original_email_data = imap_client.get_email(
-                    folder=folder,
-                    message_id=msg_id,
-                    include_body=True,
-                )
-            except Exception:
-                pass  # Continue without original email data
-
-        result = send_forward(
-            client=smtp_client,
-            to=arguments["to"],
-            subject=arguments["subject"],
-            original_email_data=original_email_data,
-            body_text=arguments.get("body_text"),
-            body_html=arguments.get("body_html"),
+        original = _original("original_uid", "original_message_id")
+        return _send(
+            compose.compose_forward(
+                original,
+                to=arguments["to"],
+                cc=arguments.get("cc"),
+                bcc=arguments.get("bcc"),
+                body_text=arguments.get("body_text"),
+                body_html=arguments.get("body_html"),
+                forward_attachments=arguments.get("forward_attachments", True),
+                attachments=await _attachment_dicts(),
+                signature=signature,
+                cfg=cfg,
+            )
         )
+
+    elif name == "send_draft":
+        connection = imap_client._ensure_connected()
+        uid = int(arguments["uid"])
+        folder, draft = draft_ops.load_draft(connection, uid, arguments.get("drafts_folder"))
+        from email.utils import formatdate, getaddresses
+
+        rcpts = [
+            addr
+            for _n, addr in getaddresses(
+                draft.get_all("To", []) + draft.get_all("Cc", []) + draft.get_all("Bcc", [])
+            )
+            if addr
+        ]
+        if not rcpts:
+            raise ValueError(f"Draft UID {uid} has no recipients – not sent.")
+        del draft["Date"]
+        draft["Date"] = formatdate(localtime=True)
+        # smtplib.send_message drops the Bcc header from the transmitted copy;
+        # the Sent copy keeps it as the user's own record (like Spark).
+        _send_message(smtp_client, draft, from_addr=sender, to_addrs=rcpts)
+        sent_folder = draft_ops.append_to_sent(connection, draft.as_bytes())
+        draft_ops.delete_draft(connection=connection, uid=uid, folder=folder)
+        result = {
+            "sent": True,
+            "to": rcpts,
+            "message_id": draft.get("Message-ID"),
+            "sent_folder": sent_folder,
+            "deleted_draft_uid": uid,
+        }
         return [TextContent(type="text", text=str(result))]
 
     # ---------------------------------------------------------------------
@@ -1344,51 +1462,37 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
         "save_reply_draft",
         "save_forward_draft",
     ):
-        from ..operations import drafts as draft_ops
-        from ..transfer import resolve_attach_from
-
         connection = imap_client._ensure_connected()
-        sender = imap_client.config.user
 
-        # Resolve attach_from once per call. delete_draft has no attach_from
-        # parameter, so we skip the lookup for it. The result is the standard
-        # attachment-dict shape (base64), ready to be concatenated with the
-        # caller's inline attachments list.
-        attach_from_dicts: list[dict] = []
-        if name != "delete_draft":
-            attach_from_dicts = await resolve_attach_from(arguments.get("attach_from"))
-
-        def _merge_attachments(key: str = "attachments") -> list[dict] | None:
-            merged = list(arguments.get(key) or []) + attach_from_dicts
-            return merged or None
-
-        if name == "save_draft":
-            result = draft_ops.save_draft(
+        if name in ("save_draft", "update_draft"):
+            text, html = compose.assemble_bodies(
+                arguments.get("body_text"),
+                arguments.get("body_html"),
+                signature=signature,
+                cfg=cfg,
+            )
+            common = dict(
                 connection=connection,
                 sender=sender,
+                sender_name=sender_name,
                 to=arguments["to"],
                 subject=arguments["subject"],
-                body_text=arguments.get("body_text"),
-                body_html=arguments.get("body_html"),
+                body_text=text,
+                body_html=html,
                 cc=arguments.get("cc"),
                 bcc=arguments.get("bcc"),
-                attachments=_merge_attachments(),
-                drafts_folder=arguments.get("drafts_folder"),
+                attachments=await _attachment_dicts(),
             )
-        elif name == "update_draft":
-            result = draft_ops.update_draft(
-                connection=connection,
-                uid=int(arguments["uid"]),
-                sender=sender,
-                to=arguments["to"],
-                subject=arguments["subject"],
-                body_text=arguments.get("body_text"),
-                body_html=arguments.get("body_html"),
-                cc=arguments.get("cc"),
-                bcc=arguments.get("bcc"),
-                attachments=_merge_attachments(),
-                folder=arguments.get("drafts_folder"),
-            )
+            if name == "save_draft":
+                result = draft_ops.save_draft(
+                    **common, drafts_folder=arguments.get("drafts_folder")
+                )
+            else:
+                result = draft_ops.update_draft(
+                    **common,
+                    uid=int(arguments["uid"]),
+                    folder=arguments.get("drafts_folder"),
+                )
         elif name == "delete_draft":
             result = draft_ops.delete_draft(
                 connection=connection,
@@ -1399,23 +1503,25 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
             result = draft_ops.save_reply_draft(
                 connection=connection,
                 sender=sender,
+                sender_name=sender_name,
                 original_uid=int(arguments["original_uid"]),
                 original_folder=arguments.get("original_folder", "INBOX"),
                 body_text=arguments.get("body_text"),
                 body_html=arguments.get("body_html"),
                 reply_all=arguments.get("reply_all", False),
                 include_quote=arguments.get("include_quote", True),
-                attachments=_merge_attachments(),
+                signature=signature,
+                attachments=await _attachment_dicts(),
                 drafts_folder=arguments.get("drafts_folder"),
+                cfg=cfg,
             )
-        elif name == "save_forward_draft":
-            # For save_forward_draft, attach_from items go alongside the
-            # explicit `additional_attachments` list rather than overwriting
-            # the carried-over original attachments controlled by
-            # `forward_attachments`.
+        else:  # save_forward_draft
+            # attach_from items go alongside `additional_attachments`, the
+            # carried-over originals are controlled by `forward_attachments`.
             result = draft_ops.save_forward_draft(
                 connection=connection,
                 sender=sender,
+                sender_name=sender_name,
                 original_uid=int(arguments["original_uid"]),
                 original_folder=arguments.get("original_folder", "INBOX"),
                 to=arguments["to"],
@@ -1424,11 +1530,11 @@ async def handle_smtp_tool(name: str, arguments: dict) -> list[TextContent]:
                 body_text=arguments.get("body_text"),
                 body_html=arguments.get("body_html"),
                 forward_attachments=arguments.get("forward_attachments", True),
-                additional_attachments=_merge_attachments("additional_attachments"),
+                additional_attachments=await _attachment_dicts("additional_attachments"),
+                signature=signature,
                 drafts_folder=arguments.get("drafts_folder"),
+                cfg=cfg,
             )
-        else:  # pragma: no cover - exhaustive above
-            return None
         return [TextContent(type="text", text=str(result))]
 
     return None  # Not an SMTP tool

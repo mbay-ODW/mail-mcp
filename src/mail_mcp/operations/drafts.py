@@ -15,11 +15,11 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from email import message_from_bytes
 from email.message import Message
 from email.utils import make_msgid
 from typing import Any
 
+from .. import compose
 from ..smtp import Attachment
 from ..smtp.operations.message import build_message
 
@@ -199,6 +199,7 @@ def save_draft(
     flags: list[str] | None = None,
     internal_date: str | None = None,
     extra_headers: dict[str, str] | None = None,
+    sender_name: str | None = None,
 ) -> dict[str, Any]:
     """Build a fresh MIME message and IMAP-APPEND it as a draft.
 
@@ -215,6 +216,7 @@ def save_draft(
         cc=cc,
         bcc=bcc,
         attachments=_attachments_from_dicts(attachments),
+        sender_name=sender_name,
     )
     if extra_headers:
         for k, v in extra_headers.items():
@@ -290,6 +292,7 @@ def update_draft(
     folder: str | None = None,
     flags: list[str] | None = None,
     internal_date: str | None = None,
+    sender_name: str | None = None,
 ) -> dict[str, Any]:
     """Replace an existing draft.
 
@@ -311,6 +314,7 @@ def update_draft(
         drafts_folder=folder,
         flags=flags,
         internal_date=internal_date,
+        sender_name=sender_name,
     )
     delete_draft(connection=connection, uid=uid, folder=folder)
     new_result["replaced_uid"] = uid
@@ -318,109 +322,41 @@ def update_draft(
 
 
 # -----------------------------------------------------------------------------
-# Reply / forward draft helpers
+# Reply / forward drafts (composition lives in ..compose, shared with send)
 # -----------------------------------------------------------------------------
 
-
-def _decode_subject(subject: str) -> str:
-    """Decode an RFC 2047 encoded-word subject to plain Unicode.
-
-    Outlook & friends send umlaut subjects as ``=?utf-8?B?...?=``. Without
-    decoding, prepending ``Re:``/``Fwd:`` would yield a literal
-    ``Re: =?utf-8?B?...?=`` in the draft. ``decode_header`` handles both
-    encoded and plain subjects, including mixed runs of encoded words.
-    """
-    if not subject:
-        return subject
-    from email.header import decode_header
-
-    parts: list[str] = []
-    for chunk, charset in decode_header(subject):
-        if isinstance(chunk, bytes):
-            parts.append(chunk.decode(charset or "utf-8", errors="replace"))
-        else:
-            parts.append(chunk)
-    return "".join(parts)
+# Kept as module-level names for callers/tests that import them from here.
+_decode_subject = compose.decode_mime_header
+_strip_re_prefix = compose.strip_reply_prefixes
+_strip_fwd_prefix = compose.strip_forward_prefixes
+_references_for_reply = compose.references_for_reply
+_fetch_original_raw = compose.fetch_original
 
 
-def _strip_re_prefix(subject: str) -> str:
-    """Collapse leading ``Re: Re: …`` to a single ``Re:`` for dedup."""
-    return re.sub(r"^(?:re:\s*)+", "", subject, flags=re.IGNORECASE).strip()
-
-
-def _strip_fwd_prefix(subject: str) -> str:
-    return re.sub(r"^(?:fwd?:\s*)+", "", subject, flags=re.IGNORECASE).strip()
-
-
-def _fetch_original_raw(connection, folder: str, uid: int) -> Message:
-    _ensure_folder_selected(connection, folder)
-    typ, data = connection.uid("FETCH", str(int(uid)), "(RFC822)")
-    if typ != "OK" or not data:
-        raise RuntimeError(f"Could not fetch UID {uid} from {folder!r}: {typ}")
-    raw_bytes: bytes | None = None
-    for entry in data:
-        if isinstance(entry, tuple) and len(entry) >= 2:
-            raw_bytes = entry[1]
-            break
-    if raw_bytes is None:
-        raise RuntimeError(f"FETCH UID {uid} returned no RFC822 body")
-    return message_from_bytes(raw_bytes)
-
-
-def _references_for_reply(original: Message) -> str:
-    """Build the RFC 5322 ``References`` header for a reply.
-
-    Standard rule: previous ``References`` + previous ``Message-ID``,
-    falling back to the previous ``In-Reply-To`` if no ``References``.
-    """
-    parts: list[str] = []
-    prev_refs = original.get("References", "")
-    if prev_refs:
-        parts.extend(prev_refs.split())
-    elif original.get("In-Reply-To"):
-        parts.append(original["In-Reply-To"].strip())
-    msg_id = original.get("Message-ID")
-    if msg_id and msg_id not in parts:
-        parts.append(msg_id.strip())
-    return " ".join(parts)
-
-
-def _extract_text_body(msg: Message) -> str:
-    if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                payload = part.get_payload(decode=True) or b""
-                charset = part.get_content_charset() or "utf-8"
-                try:
-                    return payload.decode(charset, errors="replace")
-                except LookupError:
-                    return payload.decode("utf-8", errors="replace")
-        # fallback: html stripped of tags
-        for part in msg.walk():
-            if part.get_content_type() == "text/html":
-                payload = part.get_payload(decode=True) or b""
-                charset = part.get_content_charset() or "utf-8"
-                try:
-                    html = payload.decode(charset, errors="replace")
-                except LookupError:
-                    html = payload.decode("utf-8", errors="replace")
-                return re.sub(r"<[^>]+>", "", html)
-        return ""
-    payload = msg.get_payload(decode=True) or b""
-    charset = msg.get_content_charset() or "utf-8"
-    try:
-        return payload.decode(charset, errors="replace")
-    except LookupError:
-        return payload.decode("utf-8", errors="replace")
-
-
-def _quote_block(orig: Message) -> str:
-    body = _extract_text_body(orig).rstrip()
-    if not body:
-        return ""
-    quoted = "\n".join("> " + line for line in body.splitlines())
-    header = f"Am {orig.get('Date', '')} schrieb {orig.get('From', '')}:\n"
-    return header + quoted
+def _save_composed(
+    connection,
+    sender: str,
+    composed: compose.Composed,
+    *,
+    sender_name: str | None,
+    drafts_folder: str | None,
+    flags: list[str] | None,
+) -> dict[str, Any]:
+    return save_draft(
+        connection=connection,
+        sender=sender,
+        sender_name=sender_name,
+        to=composed.to,
+        cc=composed.cc,
+        bcc=composed.bcc,
+        subject=composed.subject,
+        body_text=composed.body_text,
+        body_html=composed.body_html,
+        attachments=composed.attachments,
+        drafts_folder=drafts_folder,
+        flags=flags,
+        extra_headers=composed.headers,
+    )
 
 
 def save_reply_draft(
@@ -433,65 +369,37 @@ def save_reply_draft(
     body_html: str | None = None,
     reply_all: bool = False,
     include_quote: bool = True,
+    signature: bool = True,
     attachments: list[dict] | None = None,
     drafts_folder: str | None = None,
     flags: list[str] | None = None,
+    sender_name: str | None = None,
+    cfg: compose.ComposeConfig | None = None,
 ) -> dict[str, Any]:
-    """Save a properly-threaded reply as a draft."""
-    if not body_text and not body_html:
-        raise ValueError("body_text or body_html is required")
+    """Save a properly-threaded reply as a draft.
 
-    original = _fetch_original_raw(connection, original_folder, original_uid)
-    orig_subject = _decode_subject(original.get("Subject", ""))
-    subject = "Re: " + _strip_re_prefix(orig_subject) if orig_subject else "Re: (no subject)"
-
-    # Recipients: To = original Reply-To/From, Cc = original To+Cc minus our own address (if reply_all).
-    reply_to_field = original.get("Reply-To") or original.get("From") or ""
-    to = [a.strip() for a in re.split(r"[,;]", reply_to_field) if a.strip()] or [reply_to_field]
-
-    cc_list: list[str] | None = None
-    if reply_all:
-        from email.utils import getaddresses
-
-        all_orig_recipients = getaddresses(original.get_all("To", []) + original.get_all("Cc", []))
-        # Filter out our own address and the primary "to" addresses.
-        own_lower = sender.lower()
-        to_lower = {addr.split("<")[-1].strip(">").strip().lower() for addr in to}
-        cc_addrs: list[str] = []
-        for _name, addr in all_orig_recipients:
-            if not addr:
-                continue
-            if addr.lower() == own_lower or addr.lower() in to_lower:
-                continue
-            cc_addrs.append(addr)
-        cc_list = cc_addrs or None
-
-    composed_text = body_text or ""
-    if include_quote:
-        quote = _quote_block(original)
-        if quote:
-            composed_text = (composed_text + "\n\n" + quote).strip()
-
-    extra: dict[str, str] = {}
-    msg_id = original.get("Message-ID")
-    if msg_id:
-        extra["In-Reply-To"] = msg_id
-    refs = _references_for_reply(original)
-    if refs:
-        extra["References"] = refs
-
-    return save_draft(
-        connection=connection,
-        sender=sender,
-        to=to,
-        subject=subject,
-        body_text=composed_text or None,
+    The quote goes into both the text and the HTML part (Spark shows the
+    HTML part), followed by the configured signature – see ``compose``.
+    """
+    original = compose.fetch_original(connection, original_folder, original_uid)
+    composed = compose.compose_reply(
+        original,
+        own_address=sender,
+        body_text=body_text,
         body_html=body_html,
-        cc=cc_list,
+        reply_all=reply_all,
+        include_quote=include_quote,
+        signature=signature,
         attachments=attachments,
+        cfg=cfg,
+    )
+    return _save_composed(
+        connection,
+        sender,
+        composed,
+        sender_name=sender_name,
         drafts_folder=drafts_folder,
         flags=flags,
-        extra_headers=extra,
     )
 
 
@@ -508,65 +416,90 @@ def save_forward_draft(
     body_html: str | None = None,
     forward_attachments: bool = True,
     additional_attachments: list[dict] | None = None,
+    signature: bool = True,
     drafts_folder: str | None = None,
     flags: list[str] | None = None,
+    sender_name: str | None = None,
+    cfg: compose.ComposeConfig | None = None,
 ) -> dict[str, Any]:
     """Save a forwarded copy of an existing email as a draft."""
-    original = _fetch_original_raw(connection, original_folder, original_uid)
-
-    orig_subject = _decode_subject(original.get("Subject", ""))
-    subject = "Fwd: " + _strip_fwd_prefix(orig_subject) if orig_subject else "Fwd: (no subject)"
-
-    # Build forwarded text – preface + RFC 5322 quoting of the original.
-    intro = body_text or ""
-    forwarded_block = (
-        "\n\n---------- Weitergeleitete Nachricht ----------\n"
-        f"Von: {original.get('From', '')}\n"
-        f"Datum: {original.get('Date', '')}\n"
-        f"Betreff: {orig_subject}\n"
-        f"An: {original.get('To', '')}\n"
-    )
-    cc_orig = original.get("Cc")
-    if cc_orig:
-        forwarded_block += f"Cc: {cc_orig}\n"
-    forwarded_block += "\n" + _extract_text_body(original)
-    composed_text = (intro + forwarded_block).strip()
-
-    # Collect attachments from the original (if requested) + caller-supplied extras.
-    forward_atts: list[dict] = []
-    if forward_attachments and original.is_multipart():
-        import base64
-
-        for part in original.walk():
-            disp = (part.get("Content-Disposition") or "").lower()
-            if "attachment" not in disp and not part.get_filename():
-                continue
-            data = part.get_payload(decode=True)
-            if not data:
-                continue
-            forward_atts.append(
-                {
-                    "filename": part.get_filename() or "attachment.bin",
-                    "content_type": part.get_content_type(),
-                    "data_base64": base64.b64encode(data).decode("ascii"),
-                }
-            )
-    if additional_attachments:
-        forward_atts.extend(additional_attachments)
-
-    return save_draft(
-        connection=connection,
-        sender=sender,
+    original = compose.fetch_original(connection, original_folder, original_uid)
+    composed = compose.compose_forward(
+        original,
         to=to,
         cc=cc,
         bcc=bcc,
-        subject=subject,
-        body_text=composed_text or None,
+        body_text=body_text,
         body_html=body_html,
-        attachments=forward_atts or None,
+        forward_attachments=forward_attachments,
+        attachments=additional_attachments,
+        signature=signature,
+        cfg=cfg,
+    )
+    return _save_composed(
+        connection,
+        sender,
+        composed,
+        sender_name=sender_name,
         drafts_folder=drafts_folder,
         flags=flags,
     )
+
+
+# -----------------------------------------------------------------------------
+# send_draft helpers: load a stored draft, file the sent copy
+# -----------------------------------------------------------------------------
+
+_SENT_FOLDER_FALLBACKS: list[str] = [
+    "Sent",
+    "INBOX.Sent",
+    "INBOX/Sent",
+    "Gesendet",
+    "INBOX.Gesendet",
+    "Sent Items",
+    "Gesendete Objekte",
+    "[Gmail]/Sent Mail",
+]
+
+
+def find_sent_folder(connection) -> str:
+    """Resolve the Sent folder via SPECIAL-USE ``\\Sent`` or common names."""
+    try:
+        typ, raw_response = connection.list('""', '"*"')
+    except Exception:
+        typ, raw_response = "NO", []
+    available: list[str] = []
+    if typ == "OK" and raw_response:
+        for entry in raw_response:
+            if not entry:
+                continue
+            decoded = (
+                entry.decode("utf-8", errors="replace") if isinstance(entry, bytes) else str(entry)
+            )
+            m = re.search(r'"([^"]+)"\s*$', decoded)
+            if not m:
+                continue
+            if "\\Sent" in decoded:
+                return m.group(1)
+            available.append(m.group(1))
+    for candidate in _SENT_FOLDER_FALLBACKS:
+        if candidate in available:
+            return candidate
+    return "INBOX.Sent"
+
+
+def load_draft(connection, uid: int, folder: str | None = None) -> tuple[str, Message]:
+    """Fetch a stored draft by UID. Returns ``(folder, message)``."""
+    folder = find_drafts_folder(connection, folder)
+    return folder, compose.fetch_original(connection, folder, uid)
+
+
+def append_to_sent(connection, raw: bytes) -> str:
+    """File a copy of a sent message in the Sent folder (flag ``\\Seen``)."""
+    folder = find_sent_folder(connection)
+    raw = re.sub(rb"\r?\n", b"\r\n", raw)
+    append_with_uid(connection, folder, raw, flags=["\\Seen"])
+    return folder
 
 
 __all__ = [
@@ -578,4 +511,7 @@ __all__ = [
     "delete_draft",
     "save_reply_draft",
     "save_forward_draft",
+    "find_sent_folder",
+    "load_draft",
+    "append_to_sent",
 ]

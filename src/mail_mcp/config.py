@@ -71,6 +71,10 @@ class TransferConfig:
         HERO_GRAPHQL_URL        – HERO GraphQL endpoint (has a default)
         HERO_FILE_UPLOAD_URL    – HERO REST file-upload endpoint (has a default)
         ATTACHMENT_MAX_SIZE_KB  – Max attachment size for get_attachment include_data=true (default: 50)
+        NEXTCLOUD_URL           – Nextcloud base URL for attach_from source 'nextcloud'
+        NEXTCLOUD_USER          – Nextcloud user (WebDAV files root)
+        NEXTCLOUD_PASSWORD      – Nextcloud app password
+        ATTACH_FROM_MAX_MB      – Total size limit for attach_from downloads (default: 20)
     """
 
     paperless_url: str = ""
@@ -79,6 +83,10 @@ class TransferConfig:
     hero_graphql_url: str = "https://login.hero-software.de/api/external/v7/graphql"
     hero_file_upload_url: str = "https://login.hero-software.de/app/v8/FileUploads/upload"
     attachment_max_size_kb: int = 50
+    nextcloud_url: str = ""
+    nextcloud_user: str = ""
+    nextcloud_password: str = ""
+    attach_from_max_mb: int = 20
 
     @classmethod
     def from_env(cls) -> "TransferConfig":
@@ -95,11 +103,19 @@ class TransferConfig:
                 "https://login.hero-software.de/app/v8/FileUploads/upload",
             ),
             attachment_max_size_kb=int(os.getenv("ATTACHMENT_MAX_SIZE_KB", "50")),
+            nextcloud_url=os.getenv("NEXTCLOUD_URL", "").rstrip("/"),
+            nextcloud_user=os.getenv("NEXTCLOUD_USER", ""),
+            nextcloud_password=os.getenv("NEXTCLOUD_PASSWORD", ""),
+            attach_from_max_mb=int(os.getenv("ATTACH_FROM_MAX_MB", "20")),
         )
 
     @property
     def paperless_enabled(self) -> bool:
         return bool(self.paperless_url and self.paperless_api_key)
+
+    @property
+    def nextcloud_enabled(self) -> bool:
+        return bool(self.nextcloud_url and self.nextcloud_user and self.nextcloud_password)
 
     @property
     def hero_enabled(self) -> bool:

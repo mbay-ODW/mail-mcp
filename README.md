@@ -54,6 +54,29 @@ Configure via environment variables:
 | `SMTP_SSL` | Use SSL/TLS (port 465) | `true` |
 | `SMTP_STARTTLS` | Use STARTTLS (port 587) | `false` |
 
+### Sender, Signature, Attachments
+
+Replies, forwards and new mails are built like Spark composes them: body →
+signature → quoted original, in both the text and the HTML part
+(`messageBodySection` / `messageSignatureSection` / `messageReplySection`).
+All compose/send tools take `signature` (default `true`); a signature already
+in the body is not added twice. Without signature files no signature is added.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `FROM_NAME` | Display name in the From header | - |
+| `SIGNATURE_HTML_FILE` | HTML signature file | - |
+| `SIGNATURE_TEXT_FILE` | Plain-text signature file | - |
+| `SIGNATURE_MARKER` | Text that marks a signature already present in `body_text` | whole text signature |
+| `NEXTCLOUD_URL` / `NEXTCLOUD_USER` / `NEXTCLOUD_PASSWORD` | WebDAV access for `attach_from` source `nextcloud` (app password, `NEXTCLOUD_PASSWORD_FILE` for Docker secrets) | - |
+| `ATTACH_FROM_MAX_MB` | Total size limit of all `attach_from` downloads per call | `20` |
+
+`attach_from` sources: `{"source":"paperless","id":123}`,
+`{"source":"nextcloud","path":"Projekte/x/FUE.pdf"}`,
+`{"source":"url","url":"https://…"}` (https only, public hosts only, no redirects).
+
+`send_draft(uid)` sends a stored draft as-is, files a copy in Sent and deletes the draft.
+
 ### Example
 
 ```bash

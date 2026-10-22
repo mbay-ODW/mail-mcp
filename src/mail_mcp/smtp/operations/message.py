@@ -7,6 +7,7 @@ from email.mime.application import MIMEApplication
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr
 
 from .. import Attachment
 
@@ -47,6 +48,7 @@ def build_email_message(
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
     attachments: list[Attachment] | None = None,
+    sender_name: str | None = None,
 ) -> Message:
     """Build a basic email message.
 
@@ -75,6 +77,7 @@ def build_email_message(
         cc=cc,
         bcc=bcc,
         attachments=attachments,
+        sender_name=sender_name,
     )
 
 
@@ -87,6 +90,7 @@ def build_message(
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
     attachments: list[Attachment] | None = None,
+    sender_name: str | None = None,
 ) -> Message:
     """Build email message with the *minimal* MIME structure.
 
@@ -112,6 +116,7 @@ def build_message(
         cc: CC recipients
         bcc: BCC recipients
         attachments: List of attachments
+        sender_name: Optional display name for the From header
 
     Returns:
         Email message object (``MIMEText`` or ``MIMEMultipart`` depending
@@ -151,7 +156,7 @@ def build_message(
 
     # 3) Headers go on whichever object we return (works for MIMEText and
     #    MIMEMultipart alike).
-    msg["From"] = sender
+    msg["From"] = formataddr((sender_name, sender), charset="utf-8") if sender_name else sender
     msg["To"] = ", ".join(to)
     msg["Subject"] = Header(subject, "utf-8")
     if cc:

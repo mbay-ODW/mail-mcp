@@ -327,6 +327,121 @@ def _filename_from_disposition(header: str | None) -> str | None:
     return None
 
 
+class _Budget:
+    """Shared byte budget for all attach_from downloads of one call."""
+
+    def __init__(self, max_bytes: int) -> None:
+        self.max_bytes = max_bytes
+        self.used = 0
+
+    def take(self, n: int, what: str) -> None:
+        self.used += n
+        if self.used > self.max_bytes:
+            raise ValueError(
+                f"attach_from: Größenlimit {self.max_bytes // (1024 * 1024)} MB überschritten "
+                f"(bei {what}). Weniger oder kleinere Dateien anhängen."
+            )
+
+
+async def _stream_download(
+    client: httpx.AsyncClient, url: str, budget: _Budget, what: str, **kwargs: Any
+) -> tuple[bytes, httpx.Headers]:
+    """GET ``url`` in chunks, aborting as soon as the budget is exceeded."""
+    chunks: list[bytes] = []
+    async with client.stream("GET", url, **kwargs) as resp:
+        if resp.status_code == 404:
+            raise FileNotFoundError(f"attach_from: {what} nicht gefunden (404)")
+        resp.raise_for_status()
+        async for chunk in resp.aiter_bytes():
+            budget.take(len(chunk), what)
+            chunks.append(chunk)
+        return b"".join(chunks), resp.headers
+
+
+def _guess_type(filename: str, header_type: str | None = None) -> str:
+    import mimetypes
+
+    guessed, _ = mimetypes.guess_type(filename)
+    if guessed:
+        return guessed
+    header_type = (header_type or "").split(";")[0].strip()
+    return header_type or "application/octet-stream"
+
+
+async def download_from_nextcloud(path: str, budget: _Budget) -> dict[str, Any]:
+    """Fetch a file from Nextcloud via WebDAV with the instance's credentials."""
+    from urllib.parse import quote
+
+    cfg = _get_cfg()
+    if not cfg.nextcloud_enabled:
+        raise RuntimeError(
+            "Nextcloud nicht konfiguriert – NEXTCLOUD_URL, NEXTCLOUD_USER und "
+            "NEXTCLOUD_PASSWORD setzen."
+        )
+    clean = path.strip().lstrip("/")
+    if not clean or any(seg == ".." for seg in clean.split("/")):
+        raise ValueError(f"attach_from[nextcloud]: ungültiger Pfad {path!r}")
+    url = (
+        f"{cfg.nextcloud_url}/remote.php/dav/files/{quote(cfg.nextcloud_user, safe='')}/"
+        f"{quote(clean)}"
+    )
+    async with httpx.AsyncClient(timeout=120) as client:
+        data, headers = await _stream_download(
+            client,
+            url,
+            budget,
+            f"Nextcloud-Datei {clean!r}",
+            auth=(cfg.nextcloud_user, cfg.nextcloud_password),
+        )
+    filename = clean.rsplit("/", 1)[-1]
+    return {
+        "filename": filename,
+        "content_type": _guess_type(filename, headers.get("content-type")),
+        "data": data,
+    }
+
+
+def _check_public_https(url: str) -> str:
+    """Allow only https URLs whose host resolves to public addresses.
+
+    The fetched bytes leave the house as an attachment, so internal
+    services must not be reachable through this path.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname:
+        raise ValueError("attach_from[url]: nur https-URLs sind erlaubt")
+    try:
+        infos = socket.getaddrinfo(parts.hostname, parts.port or 443)
+    except socket.gaierror as exc:
+        raise ValueError(f"attach_from[url]: Host {parts.hostname!r} unbekannt") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            raise ValueError(f"attach_from[url]: {parts.hostname!r} zeigt auf eine interne Adresse")
+    return parts.path
+
+
+async def download_from_url(url: str, budget: _Budget) -> dict[str, Any]:
+    from urllib.parse import unquote
+
+    path = _check_public_https(url)
+    # Redirects are not followed: each hop would need the same host check.
+    async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
+        data, headers = await _stream_download(client, url, budget, f"URL {url}")
+    filename = _filename_from_disposition(headers.get("content-disposition"))
+    if not filename:
+        filename = unquote(path.rstrip("/").rsplit("/", 1)[-1]) or "download"
+    return {
+        "filename": filename,
+        "content_type": _guess_type(filename, headers.get("content-type")),
+        "data": data,
+    }
+
+
 async def resolve_attach_from(
     items: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
@@ -334,23 +449,25 @@ async def resolve_attach_from(
 
     Input shape (per item)::
 
-        {"source": "paperless", "id": 1234, "filename": "optional override",
-         "as_original": false}
+        {"source": "paperless", "id": 1234, "filename": "optional", "as_original": false}
+        {"source": "nextcloud", "path": "Projekte/x/FUE.pdf", "filename": "optional"}
+        {"source": "url", "url": "https://…", "filename": "optional"}
 
     Output shape (per item, matches existing ``attachments`` schema)::
 
         {"filename": "...", "content_type": "...", "data_base64": "..."}
 
-    Bytes are downloaded directly from the source service – Paperless today,
-    HERO later – and never round-trip through Claude's context. Returns an
-    empty list if ``items`` is None/empty so callers can blindly extend their
-    existing attachments list.
+    Bytes are downloaded directly from the source and never round-trip
+    through Claude's context. All downloads of one call share one size
+    budget (``ATTACH_FROM_MAX_MB``). Returns an empty list if ``items`` is
+    None/empty so callers can blindly extend their attachments list.
     """
     if not items:
         return []
 
     import base64 as _b64
 
+    budget = _Budget(_get_cfg().attach_from_max_mb * 1024 * 1024)
     resolved: list[dict[str, Any]] = []
     for entry in items:
         source = (entry.get("source") or "").lower()
@@ -368,14 +485,15 @@ async def resolve_attach_from(
                 doc_id=doc_id,
                 as_original=bool(entry.get("as_original", False)),
             )
-            override = entry.get("filename")
-            resolved.append(
-                {
-                    "filename": override or doc["filename"],
-                    "content_type": doc["content_type"],
-                    "data_base64": _b64.b64encode(doc["data"]).decode("ascii"),
-                }
-            )
+            budget.take(len(doc["data"]), f"Paperless-Dokument {doc_id}")
+        elif source == "nextcloud":
+            if not entry.get("path"):
+                raise ValueError("attach_from[nextcloud]: 'path' is required")
+            doc = await download_from_nextcloud(entry["path"], budget)
+        elif source == "url":
+            if not entry.get("url"):
+                raise ValueError("attach_from[url]: 'url' is required")
+            doc = await download_from_url(entry["url"], budget)
         elif source == "hero":
             # HERO does not currently expose a documented document-download
             # endpoint via GraphQL or REST. Once HERO support confirms the
@@ -388,7 +506,17 @@ async def resolve_attach_from(
                 "document-download endpoint, then extend transfer.py."
             )
         else:
-            raise ValueError(f"attach_from: unknown source {source!r}. Supported: 'paperless'.")
+            raise ValueError(
+                f"attach_from: unknown source {source!r}. "
+                "Supported: 'paperless', 'nextcloud', 'url'."
+            )
+        resolved.append(
+            {
+                "filename": entry.get("filename") or doc["filename"],
+                "content_type": doc["content_type"],
+                "data_base64": _b64.b64encode(doc["data"]).decode("ascii"),
+            }
+        )
     return resolved
 
 
@@ -396,5 +524,7 @@ __all__ = [
     "upload_to_paperless",
     "upload_to_hero",
     "download_from_paperless",
+    "download_from_nextcloud",
+    "download_from_url",
     "resolve_attach_from",
 ]
