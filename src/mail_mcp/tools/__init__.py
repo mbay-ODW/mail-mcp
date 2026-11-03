@@ -11,10 +11,19 @@ from ..db import get_email_store
 from ..smtp import Attachment, get_smtp_client
 from ..smtp.operations import send_prepared
 from ..smtp.operations.send import _send_message
+from ..text import html_to_text, page_text
 
 _DB_ENABLED = os.getenv("EMAIL_DB_ENABLED", "false").lower() == "true"
 _transfer_cfg = TransferConfig.from_env()
 _ATTACHMENT_MAX_BYTES = _transfer_cfg.attachment_max_size_kb * 1024
+
+# Appended to every tool that only reads mail: reading never sets \Seen.
+# The read status changes only via mark_read / mark_unread.
+_READ_ONLY_NOTE = " Does not change the read status (\\Seen); use mark_read for that."
+
+# Characters of body_text shown per hit in list/search results. Use
+# db_get_email to read the complete text.
+_LIST_BODY_PREVIEW = 500
 
 # Shared schema fragment for the ``attach_from`` parameter exposed by
 # send_email / save_draft / update_draft / save_reply_draft / save_forward_draft.
@@ -149,6 +158,78 @@ def _db_search(store, criteria: str, folder: str, limit: int) -> list[dict] | No
     # Criteria we don't support (DATE ranges, UID ranges, complex AND/OR, etc.)
     # → return None so caller falls back to IMAP
     return None
+
+
+def _preview_body(row: dict) -> dict:
+    """Shorten body_text of a result row in place and flag the cut."""
+    row.pop("body_html", None)
+    if "body_text" not in row:
+        return row  # list rows carry body_length from SQL, no text
+    body = row.get("body_text") or ""
+    row["body_length"] = len(body)
+    row["body_truncated"] = len(body) > _LIST_BODY_PREVIEW
+    if row["body_truncated"]:
+        row["body_text"] = body[:_LIST_BODY_PREVIEW] + "…"
+    return row
+
+
+def _db_get_email(
+    store, client, folder: str, uid: int, offset: int = 0, max_chars: int = 20000
+) -> dict:
+    """Full (paged) text of one mail: cache first, IMAP (read-only, PEEK) fallback."""
+    row = store.get_email_by_uid(folder, uid)
+    if row is not None:
+        body_text = row.get("body_text") or ""
+        from_html = False
+        if not body_text.strip() and row.get("body_html"):
+            body_text = html_to_text(row["body_html"])
+            from_html = True
+        attachments = [
+            {k: a.get(k) for k in ("filename", "content_type", "size")}
+            for a in store.get_attachments_meta(row["id"])
+        ]
+        flags = []
+        if row.get("is_read"):
+            flags.append("\\Seen")
+        if row.get("is_flagged"):
+            flags.append("\\Flagged")
+        result = {
+            "uid": uid,
+            "folder": folder,
+            "source": "cache",
+            "subject": row.get("subject"),
+            "from": row.get("from_addr"),
+            "to": row.get("to_addr"),
+            "cc": row.get("cc_addr"),
+            "date": row.get("date_str"),
+            "message_id": row.get("message_id"),
+            "flags": flags,
+            "flags_as_of": row.get("synced_at"),
+        }
+    else:
+        full = client.get_email(folder=folder, uid=str(uid), include_body=True)
+        body_text = full.get("body_text") or ""
+        from_html = bool(full.get("body_text_from_html"))
+        attachments = [
+            {"filename": a.get("filename"), "content_type": a.get("content_type")}
+            for a in full.get("attachments", [])
+        ]
+        result = {
+            "uid": uid,
+            "folder": folder,
+            "source": "imap",
+            "note": "Not in the local cache yet – loaded live from IMAP (read-only).",
+            "subject": full.get("subject"),
+            "from": full.get("from"),
+            "to": full.get("to"),
+            "cc": full.get("cc"),
+            "date": str(full.get("date", "")),
+            "flags": full.get("flags", []),
+        }
+    result.update(page_text(body_text, offset=offset, max_chars=max_chars))
+    result["body_text_from_html"] = from_html
+    result["attachments"] = attachments
+    return result
 
 
 def get_transfer_tools() -> list[Tool]:
@@ -306,7 +387,7 @@ def get_imap_tools() -> list[Tool]:
         ),
         Tool(
             name="search_emails",
-            description="Search emails with criteria",
+            description="Search emails with criteria." + _READ_ONLY_NOTE,
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -330,7 +411,10 @@ def get_imap_tools() -> list[Tool]:
         ),
         Tool(
             name="get_email",
-            description="Get detailed email information",
+            description=(
+                "Get detailed email information from the live IMAP server. For long "
+                "mails prefer db_get_email (paged)." + _READ_ONLY_NOTE
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -532,7 +616,7 @@ def get_imap_tools() -> list[Tool]:
                 "By default returns metadata only – no binary data – to avoid "
                 "filling the context window. Set include_data=true only for small "
                 f"files (≤ {_transfer_cfg.attachment_max_size_kb} KB). "
-                "For larger files use transfer_to_paperless or transfer_to_hero."
+                "For larger files use transfer_to_paperless or transfer_to_hero." + _READ_ONLY_NOTE
             ),
             inputSchema={
                 "type": "object",
@@ -934,7 +1018,10 @@ def get_db_tools() -> list[Tool]:
             description=(
                 "Full-text search across all locally cached emails (subject, sender, "
                 "recipient, body). Much faster than IMAP search and works across all "
-                "folders simultaneously. Requires EMAIL_DB_ENABLED=true."
+                "folders simultaneously. Each hit shows at most "
+                f"{_LIST_BODY_PREVIEW} characters of body_text; body_truncated and "
+                "body_length tell whether more exists – read the full text with "
+                "db_get_email. Requires EMAIL_DB_ENABLED=true." + _READ_ONLY_NOTE
             ),
             inputSchema={
                 "type": "object",
@@ -964,8 +1051,9 @@ def get_db_tools() -> list[Tool]:
             name="db_list_emails",
             description=(
                 "List emails from the local cache, newest first. "
-                "Faster than search_emails for browsing. "
-                "Requires EMAIL_DB_ENABLED=true."
+                "Faster than search_emails for browsing. Returns no body text, only "
+                "body_length – read a mail with db_get_email. "
+                "Requires EMAIL_DB_ENABLED=true." + _READ_ONLY_NOTE
             ),
             inputSchema={
                 "type": "object",
@@ -990,6 +1078,42 @@ def get_db_tools() -> list[Tool]:
                         "default": False,
                     },
                 },
+            },
+        ),
+        Tool(
+            name="db_get_email",
+            description=(
+                "Read ONE email completely: headers, full body_text (paged for long "
+                "mails) and attachment list. Served from the local cache; if the mail "
+                "is not cached yet it is loaded from IMAP (source='imap'). HTML-only "
+                "mails are converted to readable text. When truncated=true, call "
+                "again with offset=next_offset until truncated=false. "
+                "Requires EMAIL_DB_ENABLED=true." + _READ_ONLY_NOTE
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "uid": {
+                        "type": "integer",
+                        "description": "UID of the email (from db_list_emails / db_search_emails)",
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder containing the email (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Character offset into body_text (default: 0)",
+                        "default": 0,
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Maximum characters of body_text to return (default: 20000)",
+                        "default": 20000,
+                    },
+                },
+                "required": ["uid"],
             },
         ),
         Tool(
@@ -1077,6 +1201,8 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
             store = get_email_store()
             db_result = _db_search(store, criteria, folder, limit) if store else None
             if db_result is not None:
+                for r in db_result:
+                    _preview_body(r)
                 return [TextContent(type="text", text=str(db_result))]
             # Unsupported criteria – fall through to IMAP below
 
@@ -1277,12 +1403,25 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
             folder=arguments.get("folder"),
             limit=arguments.get("limit", 20),
         )
-        # Strip large body_html from results to keep output readable
+        # Strip large body_html and shorten body_text to keep output readable;
+        # the cut is visible via body_truncated / body_length.
         for r in results:
-            r.pop("body_html", None)
-            body = r.get("body_text") or ""
-            r["body_text"] = body[:500] + "…" if len(body) > 500 else body
+            _preview_body(r)
         return [TextContent(type="text", text=str(results))]
+
+    elif name == "db_get_email":
+        store = get_email_store()
+        if store is None:
+            return [TextContent(type="text", text="Error: EMAIL_DB_ENABLED is not set to true.")]
+        result = _db_get_email(
+            store,
+            client,
+            folder=arguments.get("folder") or "INBOX",
+            uid=int(arguments["uid"]),
+            offset=int(arguments.get("offset") or 0),
+            max_chars=int(arguments.get("max_chars") or 20000),
+        )
+        return [TextContent(type="text", text=str(result))]
 
     elif name == "db_list_emails":
         store = get_email_store()

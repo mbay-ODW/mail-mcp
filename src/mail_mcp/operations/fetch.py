@@ -55,7 +55,8 @@ class EmailFetch:
         Raises:
             EmailFetchError: If selection fails
         """
-        response = self._conn.select(folder)
+        # Read-only (EXAMINE): fetching must never set \Seen implicitly.
+        response = self._conn.select(folder, readonly=True)
         status = response[0]
         if status not in ("OK", b"OK") and not isinstance(status, int):
             error_msg = (
@@ -130,11 +131,12 @@ class EmailFetch:
             # Select the folder
             self._select_folder(folder)
 
-            # Build fetch command
+            # Build fetch command. BODY.PEEK never sets \Seen; plain BODY[] /
+            # RFC822 would mark the message as read (RFC 3501 §6.4.5).
             if headers_only:
-                fetch_items = "(BODY[HEADER])"
+                fetch_items = "(BODY.PEEK[HEADER])"
             else:
-                fetch_items = "(BODY[])"
+                fetch_items = "(BODY.PEEK[])"
 
             # Execute fetch
             response = self._conn.fetch(str(uid), fetch_items)
