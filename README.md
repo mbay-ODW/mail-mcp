@@ -211,6 +211,32 @@ Get detailed email information.
 
 **Note:** Provide either `message_id` or `uid`.
 
+**Read status:** No read tool changes the `\Seen` flag. All reads use
+`BODY.PEEK[...]` on a folder opened read-only (`EXAMINE`); this covers
+`search_emails`, `get_email`, `get_attachment`, the `db_*` tools and the
+background cache sync. Only `mark_read` / `mark_unread` change the read status.
+The background sync uses its own IMAP connection, separate from the tool calls.
+
+### Local cache (`EMAIL_DB_ENABLED=true`)
+
+- `db_list_emails` / `db_search_emails`: lists stay short on purpose. Each hit
+  has `body_length`. `db_search_emails` shows at most 500 characters of
+  `body_text` and sets `body_truncated: true` when the mail is longer.
+- `db_get_email`: reads a whole mail, with long texts split into pages:
+
+```json
+{
+  "name": "db_get_email",
+  "arguments": {"uid": 78962, "folder": "INBOX", "offset": 0, "max_chars": 20000}
+}
+```
+
+The result has `subject, from, to, cc, date, flags, body_text, body_length,
+truncated, next_offset, attachments[]`. If `truncated` is true, call again
+with `offset = next_offset`. Mails with only an HTML part are converted to
+plain text (`body_text_from_html: true`). A mail that is not cached yet is
+loaded from IMAP without changing its read status (`source: "imap"`).
+
 ### Mark Operations
 
 #### `mark_read`

@@ -10,6 +10,7 @@ from email.policy import default
 from typing import Any
 
 from .config import IMAPConfig
+from .text import html_to_text
 
 # IMAP status constants
 IMAP_OK = (b"OK", "OK")
@@ -65,6 +66,16 @@ class IMAPClient:
                 self.disconnect()
                 self.connect()
         return self._connection
+
+    def _examine(self, conn: imaplib.IMAP4, folder: str) -> None:
+        """Open ``folder`` read-only (IMAP EXAMINE) for pure read operations.
+
+        Second safety net next to ``BODY.PEEK``: in a read-only mailbox the
+        server never sets ``\\Seen`` implicitly. Write operations
+        (flags, move, delete, drafts) re-SELECT the folder read-write.
+        """
+        status, data = conn.select(folder, readonly=True)
+        self._check_status(status, data, f"Failed to open folder {folder!r}")
 
     def _check_status(self, status: Any, data: Any, context: str) -> None:
         """Check IMAP status and raise on error."""
@@ -132,7 +143,7 @@ class IMAPClient:
             limit: 返回结果数量限制
         """
         conn = self._ensure_connected()
-        conn.select(folder)
+        self._examine(conn, folder)
 
         # 如果提供了 conditions，转换为 IMAP 搜索条件
         if conditions:
@@ -242,7 +253,7 @@ class IMAPClient:
     ) -> dict[str, Any]:
         """Get email details by message ID or UID."""
         conn = self._ensure_connected()
-        conn.select(folder)
+        self._examine(conn, folder)
 
         # BODY.PEEK[] fetches the full raw RFC822 message without marking as read.
         # BODY[] (without PEEK) would mark the message as seen.
@@ -286,26 +297,35 @@ class IMAPClient:
             }
 
             if include_body:
-                if msg.is_multipart():
-                    for part in msg.walk():
-                        content_type = part.get_content_type()
-                        if content_type == "text/plain" and not result["body_text"]:
-                            result["body_text"] = self._get_part_content(part)
-                        elif content_type == "text/html" and not result["body_html"]:
-                            result["body_html"] = self._get_part_content(part)
-                        if part.get_content_disposition() == "attachment":
-                            att: dict[str, Any] = {
-                                "filename": part.get_filename() or "unknown",
-                                "content_type": content_type,
-                            }
-                            if include_attachment_data:
-                                raw = part.get_payload(decode=True)
-                                if raw is not None:
-                                    att["size"] = len(raw)
-                                    att["data"] = raw
-                            result["attachments"].append(att)
-                else:
-                    result["body_text"] = self._get_part_content(msg)
+                for part in msg.walk() if msg.is_multipart() else [msg]:
+                    if part.is_multipart():
+                        continue
+                    content_type = part.get_content_type()
+                    disposition = part.get_content_disposition()
+                    is_attachment = disposition == "attachment" or (
+                        part.get_filename() is not None and disposition != "inline"
+                    )
+                    if is_attachment:
+                        att: dict[str, Any] = {
+                            "filename": part.get_filename() or "unknown",
+                            "content_type": content_type,
+                        }
+                        if include_attachment_data:
+                            raw = part.get_payload(decode=True)
+                            if raw is not None:
+                                att["size"] = len(raw)
+                                att["data"] = raw
+                        result["attachments"].append(att)
+                    elif content_type == "text/plain" and not result["body_text"]:
+                        result["body_text"] = self._get_part_content(part)
+                    elif content_type == "text/html" and not result["body_html"]:
+                        result["body_html"] = self._get_part_content(part)
+
+                # HTML-only mails: derive readable text so callers and the
+                # full-text index always get a body_text.
+                if not result["body_text"].strip() and result["body_html"]:
+                    result["body_text"] = html_to_text(result["body_html"])
+                    result["body_text_from_html"] = True
 
             return result
 
@@ -328,7 +348,7 @@ class IMAPClient:
         transfer_to_hero instead.
         """
         conn = self._ensure_connected()
-        conn.select(folder)
+        self._examine(conn, folder)
 
         if not uid:
             raise ValueError("uid is required for get_attachment")
@@ -385,7 +405,7 @@ class IMAPClient:
         Returns (data, filename, content_type).  Never sends data to Claude.
         """
         conn = self._ensure_connected()
-        conn.select(folder)
+        self._examine(conn, folder)
 
         if not uid:
             raise ValueError("uid is required")

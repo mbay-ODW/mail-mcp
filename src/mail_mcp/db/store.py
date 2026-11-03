@@ -121,6 +121,34 @@ class EmailStore:
         conn = self._conn()
         conn.executescript(self._SCHEMA)
         conn.commit()
+        self.backfill_text_from_html()
+
+    def backfill_text_from_html(self) -> int:
+        """Fill empty ``body_text`` of HTML-only mails from ``body_html``.
+
+        Older syncs stored HTML-only mails with an empty ``body_text``, so
+        they were neither readable via the text tools nor covered by the
+        full-text index. Runs locally on the cache (no IMAP access) and only
+        touches rows that still have no text. Returns the number of rows fixed.
+        """
+        from ..text import html_to_text
+
+        conn = self._conn()
+        rows = conn.execute(
+            "SELECT id, body_html FROM emails "
+            "WHERE (body_text IS NULL OR trim(body_text) = '') "
+            "AND body_html IS NOT NULL AND body_html != ''"
+        ).fetchall()
+        fixed = 0
+        for row in rows:
+            text = html_to_text(row["body_html"])
+            if text:
+                conn.execute("UPDATE emails SET body_text=? WHERE id=?", (text, row["id"]))
+                fixed += 1
+        if fixed:
+            conn.commit()
+            logging.info("EmailStore: derived body_text from HTML for %d cached emails", fixed)
+        return fixed
 
     # ------------------------------------------------------------------
     # Write operations
@@ -297,6 +325,15 @@ class EmailStore:
             "sync_state": [dict(r) for r in sync_states],
         }
 
+    def get_email_by_uid(self, folder: str, uid: int) -> dict | None:
+        """Return the full cached row (untruncated body) for (folder, uid)."""
+        row = (
+            self._conn()
+            .execute("SELECT * FROM emails WHERE folder=? AND uid=?", (folder, int(uid)))
+            .fetchone()
+        )
+        return dict(row) if row else None
+
     def get_email_by_db_id(self, email_id: int) -> dict | None:
         row = self._conn().execute("SELECT * FROM emails WHERE id=?", (email_id,)).fetchone()
         return dict(row) if row else None
@@ -429,7 +466,8 @@ class EmailStore:
             self._conn()
             .execute(
                 f"SELECT id, folder, uid, subject, from_addr, to_addr, date_str, "
-                f"is_read, is_flagged, has_attachments "
+                f"is_read, is_flagged, has_attachments, "
+                f"length(coalesce(body_text, '')) AS body_length "
                 f"FROM emails {clause} ORDER BY uid DESC LIMIT ? OFFSET ?",
                 params,
             )

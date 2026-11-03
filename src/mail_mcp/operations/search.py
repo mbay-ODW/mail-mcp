@@ -258,7 +258,7 @@ class EmailSearch:
 
         try:
             # Select the folder
-            select_result = self._conn.select(folder)
+            select_result = self._conn.select(folder, readonly=True)
             # 检查状态 (可能是 'OK' 或 b'OK'，阿里云可能返回邮件数量)
             status = select_result[0]
             # 阿里云邮箱返回邮件数量而不是 'OK'，需要检查数据是否存在

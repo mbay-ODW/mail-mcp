@@ -29,6 +29,12 @@ class EmailSyncer:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_error: str | None = None
+        # The syncer owns a dedicated IMAP connection. Sharing the tool
+        # handlers' connection let the two threads interleave SELECT/EXAMINE
+        # and FETCH/STORE, so a tool command could run against the folder the
+        # syncer had just opened (e.g. mark_read hitting the same UID in a
+        # different folder) – a plausible source of "spontaneous" \Seen flags.
+        self._client = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -59,12 +65,26 @@ class EmailSyncer:
         while not self._stop.wait(self._interval):
             self._sync_all()
 
-    def _sync_all(self) -> None:
+    def _get_client(self):
         # Import here to avoid circular imports at module load time
-        from ..client import get_imap_client, reset_imap_client
+        from ..client import IMAPClient
+        from ..config import IMAPConfig
 
+        if self._client is None:
+            self._client = IMAPClient(IMAPConfig.from_env())
+        return self._client
+
+    def _reset_client(self) -> None:
+        if self._client is not None:
+            try:
+                self._client.disconnect()
+            except Exception:
+                pass
+            self._client = None
+
+    def _sync_all(self) -> None:
         try:
-            client = get_imap_client()
+            client = self._get_client()
             folders = client.list_folders()
             for folder_info in folders:
                 if isinstance(folder_info, dict):
@@ -79,14 +99,9 @@ class EmailSyncer:
             logging.error("EmailSyncer._sync_all error: %s", exc)
             # Reset the stale IMAP connection so the next sync cycle
             # creates a fresh connection instead of reusing a dead one.
-            try:
-                reset_imap_client()
-            except Exception:
-                pass
+            self._reset_client()
 
     def _sync_folder(self, client, folder: str) -> None:
-        from ..client import get_imap_client  # noqa: F401 (kept for type clarity)
-
         try:
             last_uid = self._store.get_last_uid(folder)
 
@@ -119,6 +134,7 @@ class EmailSyncer:
                     continue
 
                 try:
+                    # Read-only + BODY.PEEK inside get_email: syncing never sets \Seen.
                     full = client.get_email(
                         folder=folder,
                         uid=str(uid),
