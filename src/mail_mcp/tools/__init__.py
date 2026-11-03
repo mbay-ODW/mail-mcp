@@ -2,6 +2,7 @@
 
 import base64
 import os
+import sqlite3
 
 from mcp.types import TextContent, Tool
 
@@ -140,17 +141,27 @@ def _db_search(store, criteria: str, folder: str, limit: int) -> list[dict] | No
         rows = store.list_emails(folder=folder, limit=limit)
         return [r for r in rows if not r.get("is_flagged")]
 
-    # --- field searches: FROM x / TO x / SUBJECT x ---
-    m = _re.match(r"^(FROM|TO|SUBJECT)\s+(.+)$", criteria.strip(), _re.IGNORECASE)
+    # --- field searches: exactly ONE "FROM x" / "TO x" / "SUBJECT x" ---
+    # Anything combined with it (SINCE, BEFORE, a second key …) is left to
+    # IMAP: the old greedy pattern swallowed "x SINCE 01-Sep-2026" as the
+    # search value and returned 0 hits (or "no such column: Sep").
+    m = _re.match(
+        r'^(FROM|TO|SUBJECT)\s+(?:"([^"]*)"|([^\s"]+))$', criteria.strip(), _re.IGNORECASE
+    )
     if m:
         field_map = {"FROM": "from_addr", "TO": "to_addr", "SUBJECT": "subject"}
         fts_field = field_map[m.group(1).upper()]
-        value = m.group(2).strip().strip('"')
+        value = m.group(2) if m.group(2) is not None else m.group(3)
+        if not value.strip():
+            return None
         # Use FTS5 field filter for precision
         fts_query = f'{fts_field}:"{value}"'
-        results = store.search_fts(
-            fts_query, folder=folder if folder != "INBOX" else None, limit=limit
-        )
+        try:
+            results = store.search_fts(
+                fts_query, folder=folder if folder != "INBOX" else None, limit=limit
+            )
+        except sqlite3.Error:
+            return None  # let IMAP answer instead of failing
         if folder == "INBOX":
             results = [r for r in results if r.get("folder") == "INBOX"]
         return results
@@ -1398,11 +1409,18 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
         store = get_email_store()
         if store is None:
             return [TextContent(type="text", text="Error: EMAIL_DB_ENABLED is not set to true.")]
-        results = store.search_fts(
-            query=arguments["query"],
-            folder=arguments.get("folder"),
-            limit=arguments.get("limit", 20),
-        )
+        query = arguments["query"]
+        try:
+            results = store.search_fts(
+                query=query, folder=arguments.get("folder"), limit=arguments.get("limit", 20)
+            )
+        except sqlite3.OperationalError:
+            # FTS5 syntax error, e.g. "01-Sep-2026" → "no such column: Sep".
+            # Retry with every term quoted as a literal.
+            literal = " ".join('"' + t.replace('"', '""') + '"' for t in query.split())
+            results = store.search_fts(
+                query=literal, folder=arguments.get("folder"), limit=arguments.get("limit", 20)
+            )
         # Strip large body_html and shorten body_text to keep output readable;
         # the cut is visible via body_truncated / body_length.
         for r in results:
