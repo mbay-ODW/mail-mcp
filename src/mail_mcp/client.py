@@ -432,6 +432,35 @@ class IMAPClient:
         target = f"'{filename}'" if filename else "any attachment"
         raise Exception(f"No attachment {target} found in email UID {uid}")
 
+    def get_attachment_parts(self, folder: str = "INBOX", uid: str | None = None) -> list[dict]:
+        """All named MIME parts of a message: filename, content_type, data.
+
+        Read-only (EXAMINE + BODY.PEEK): never sets \\Seen. Used for server-side
+        text extraction, so the bytes never reach the LLM.
+        """
+        if not uid:
+            raise ValueError("uid is required")
+        conn = self._ensure_connected()
+        self._examine(conn, folder)
+        status, msg_data = conn.uid("FETCH", str(uid), "(BODY.PEEK[])")
+        self._check_status(status, msg_data, "Failed to fetch email for attachments")
+        raw_item = next((item for item in msg_data if isinstance(item, tuple)), None)
+        if raw_item is None:
+            raise Exception(f"Email UID {uid} not found in {folder!r}")
+        msg = email.message_from_bytes(raw_item[1], policy=default)
+        parts = []
+        for part in msg.walk():
+            if part.is_multipart():
+                continue
+            name = part.get_filename()
+            if name is None:
+                continue
+            raw = part.get_payload(decode=True)
+            if raw is None:
+                continue
+            parts.append({"filename": name, "content_type": part.get_content_type(), "data": raw})
+        return parts
+
     def _get_uid(self, msg_data: Any) -> str | None:
         """Extract the UID from a FETCH response.
 

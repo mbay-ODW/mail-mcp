@@ -237,6 +237,32 @@ with `offset = next_offset`. Mails with only an HTML part are converted to
 plain text (`body_text_from_html: true`). A mail that is not cached yet is
 loaded from IMAP without changing its read status (`source: "imap"`).
 
+### Reading attachments: `get_attachment_text`
+
+Reads the **text** of an attachment on the server. The file itself never goes
+into the LLM context, so large PDFs work as well. Supported: PDF, Word `.docx`,
+Excel `.xlsx`, PowerPoint `.pptx`, OpenDocument `.odt/.ods/.odp`,
+`.txt/.csv/.html` and forwarded `.eml`.
+
+```json
+{"name": "get_attachment_text",
+ "arguments": {"uid": "78965", "filename": "Bescheid.pdf", "pages": "2-3"}}
+```
+
+- **In pieces:** `offset`/`max_chars` (default 15,000). If `truncated` is true,
+  call again with `offset = next_offset`.
+- **By page:** `pages` such as `"3"`, `"2-5"` or `"1,4-6"` selects PDF pages,
+  slides or spreadsheet sheets. The text has markers such as `--- Seite 3 ---`.
+- **By search term:** `query="Frist Betrag"` returns only the matching passages
+  (±300 characters) with page and offset.
+- The response gives `page_count`, `text_length` and the list of all
+  attachments of the mail.
+- Scanned PDFs without a text layer return `needs_ocr: true`. Use
+  `transfer_to_paperless` for those; Paperless runs OCR.
+- The extracted text is cached in the local DB, so further pages are fast.
+  Reading never sets `\Seen`. `ATTACHMENT_TEXT_MAX_MB` (default 40) limits the
+  file size.
+
 ### Mark Operations
 
 #### `mark_read`
