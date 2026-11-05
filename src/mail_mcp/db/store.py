@@ -66,6 +66,23 @@ class EmailStore:
             data         BLOB
         );
 
+        -- Extracted plain text of attachments (get_attachment_text), so paging
+        -- through a large PDF does not re-parse it on every call.
+        CREATE TABLE IF NOT EXISTS attachment_text (
+            folder       TEXT    NOT NULL,
+            uid          INTEGER NOT NULL,
+            filename     TEXT    NOT NULL,
+            size         INTEGER,
+            kind         TEXT,
+            page_label   TEXT,
+            pages_json   TEXT,
+            needs_ocr    INTEGER DEFAULT 0,
+            warnings_json TEXT,
+            text         TEXT,
+            extracted_at TEXT,
+            PRIMARY KEY (folder, uid, filename)
+        );
+
         CREATE TABLE IF NOT EXISTS sync_state (
             folder     TEXT PRIMARY KEY,
             last_uid   INTEGER DEFAULT 0,
@@ -333,6 +350,53 @@ class EmailStore:
             .fetchone()
         )
         return dict(row) if row else None
+
+    def get_attachments_meta_by_uid(self, folder: str, uid: int) -> list[dict] | None:
+        """Attachment metadata for (folder, uid); None if the mail is not cached."""
+        row = (
+            self._conn()
+            .execute("SELECT id FROM emails WHERE folder=? AND uid=?", (folder, int(uid)))
+            .fetchone()
+        )
+        if not row:
+            return None
+        return self.get_attachments_meta(row["id"])
+
+    def get_attachment_text(self, folder: str, uid: int, filename: str) -> dict | None:
+        row = (
+            self._conn()
+            .execute(
+                "SELECT * FROM attachment_text WHERE folder=? AND uid=? AND filename=?",
+                (folder, int(uid), filename),
+            )
+            .fetchone()
+        )
+        return dict(row) if row else None
+
+    def put_attachment_text(self, folder: str, uid: int, filename: str, **fields) -> None:
+        conn = self._conn()
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO attachment_text
+                (folder, uid, filename, size, kind, page_label, pages_json, needs_ocr,
+                 warnings_json, text, extracted_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                folder,
+                int(uid),
+                filename,
+                fields.get("size"),
+                fields.get("kind"),
+                fields.get("page_label"),
+                fields.get("pages_json"),
+                int(bool(fields.get("needs_ocr"))),
+                fields.get("warnings_json"),
+                fields.get("text"),
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
 
     def get_email_by_db_id(self, email_id: int) -> dict | None:
         row = self._conn().execute("SELECT * FROM emails WHERE id=?", (email_id,)).fetchone()

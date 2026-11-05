@@ -1,6 +1,8 @@
 """MCP Tools definitions and handlers for IMAP operations."""
 
+import asyncio
 import base64
+import json
 import os
 import sqlite3
 
@@ -9,6 +11,13 @@ from mcp.types import TextContent, Tool
 from ..client import get_imap_client
 from ..config import TransferConfig
 from ..db import get_email_store
+from ..extract import (
+    ExtractionError,
+    extract_text,
+    find_snippets,
+    page_ranges,
+    parse_page_spec,
+)
 from ..smtp import Attachment, get_smtp_client
 from ..smtp.operations import send_prepared
 from ..smtp.operations.send import _send_message
@@ -21,6 +30,9 @@ _ATTACHMENT_MAX_BYTES = _transfer_cfg.attachment_max_size_kb * 1024
 # Appended to every tool that only reads mail: reading never sets \Seen.
 # The read status changes only via mark_read / mark_unread.
 _READ_ONLY_NOTE = " Does not change the read status (\\Seen); use mark_read for that."
+
+# Largest attachment get_attachment_text will parse (bytes stay on the server).
+_ATTACHMENT_TEXT_MAX_BYTES = int(os.getenv("ATTACHMENT_TEXT_MAX_MB", "40")) * 1024 * 1024
 
 # Characters of body_text shown per hit in list/search results. Use
 # db_get_email to read the complete text.
@@ -240,6 +252,148 @@ def _db_get_email(
     result.update(page_text(body_text, offset=offset, max_chars=max_chars))
     result["body_text_from_html"] = from_html
     result["attachments"] = attachments
+    return result
+
+
+def _pick(names: list[str], filename: str | None) -> str | None:
+    if filename:
+        return filename if filename in names else None
+    return names[0] if names else None
+
+
+async def _attachment_text(
+    store,
+    client,
+    folder: str,
+    uid: int,
+    filename: str | None = None,
+    offset: int = 0,
+    max_chars: int = 15000,
+    pages: str | None = None,
+    query: str | None = None,
+) -> dict:
+    """Extract (or load cached) attachment text and return the requested slice."""
+    names: list[str] = []
+    meta = store.get_attachments_meta_by_uid(folder, uid) if store else None
+    if meta:
+        names = [m["filename"] for m in meta if m.get("filename")]
+    chosen = _pick(names, filename)
+
+    cached = store.get_attachment_text(folder, uid, chosen) if store and chosen else None
+    source = "text-cache"
+    content_type = None
+    size = None
+
+    if cached is None:
+        data = None
+        if store and chosen:
+            hit = store.get_attachment_bytes_by_uid(folder, uid, chosen)
+            if hit:
+                data, chosen, content_type = hit
+                source = "cache"
+        if data is None:
+            parts = client.get_attachment_parts(folder=folder, uid=str(uid))
+            names = [p["filename"] for p in parts]
+            chosen = _pick(names, filename)
+            if chosen is None:
+                wanted = f"'{filename}'" if filename else "any attachment"
+                return {
+                    "uid": uid,
+                    "folder": folder,
+                    "error": f"No attachment {wanted} in this email.",
+                    "attachments": names,
+                }
+            part = next(p for p in parts if p["filename"] == chosen)
+            data, content_type = part["data"], part["content_type"]
+            source = "imap"
+        size = len(data)
+        if size > _ATTACHMENT_TEXT_MAX_BYTES:
+            return {
+                "uid": uid,
+                "folder": folder,
+                "filename": chosen,
+                "size": size,
+                "error": (
+                    f"Attachment is larger than {_ATTACHMENT_TEXT_MAX_BYTES // (1024 * 1024)} MB "
+                    "(ATTACHMENT_TEXT_MAX_MB). Use transfer_to_paperless instead."
+                ),
+                "attachments": names,
+            }
+        try:
+            ex = await asyncio.to_thread(extract_text, data, chosen, content_type)
+        except ExtractionError as exc:
+            return {
+                "uid": uid,
+                "folder": folder,
+                "filename": chosen,
+                "content_type": content_type,
+                "size": size,
+                "error": str(exc),
+                "attachments": names,
+            }
+        cached = {
+            "size": size,
+            "kind": ex.kind,
+            "page_label": ex.page_label,
+            "pages_json": json.dumps(ex.pages),
+            "needs_ocr": ex.needs_ocr,
+            "warnings_json": json.dumps(ex.warnings),
+            "text": ex.text,
+        }
+        if store:
+            try:
+                store.put_attachment_text(folder, uid, chosen, **cached)
+            except sqlite3.Error:
+                pass  # cache is an optimisation only
+
+    text = cached["text"] or ""
+    page_list = [tuple(p) for p in json.loads(cached.get("pages_json") or "[]")]
+    result: dict = {
+        "uid": uid,
+        "folder": folder,
+        "filename": chosen,
+        "source": source,
+        "kind": cached.get("kind"),
+        "size": cached.get("size") if size is None else size,
+        "page_count": len(page_list) or None,
+        "page_label": cached.get("page_label") if page_list else None,
+        "text_length": len(text),
+        "needs_ocr": bool(cached.get("needs_ocr")),
+        "warnings": json.loads(cached.get("warnings_json") or "[]"),
+    }
+    if content_type:
+        result["content_type"] = content_type
+    if len(names) > 1:
+        result["attachments"] = names
+
+    if query:
+        total, hits = find_snippets(text, query, page_list)
+        result["query"] = query
+        result["total_hits"] = total
+        result["hits"] = hits
+        if total > len(hits):
+            result["note"] = "More hits than shown – narrow the query or read by pages."
+        return result
+
+    start, end = 0, len(text)
+    if pages:
+        wanted = parse_page_spec(pages, len(page_list))
+        if not page_list:
+            result["warnings"].append("This file type has no pages; 'pages' was ignored.")
+        elif not wanted:
+            result["error"] = f"No such page. {result['page_label']} 1–{len(page_list)} exist."
+            return result
+        else:
+            ranges = page_ranges(page_list, len(text))
+            start, end = ranges[wanted[0]][0], ranges[wanted[-1]][1]
+            result["pages"] = f"{wanted[0]}-{wanted[-1]}" if len(wanted) > 1 else str(wanted[0])
+    offset = max(int(offset or 0), start)
+    max_chars = max(1, int(max_chars or 15000))
+    stop = min(end, offset + max_chars)
+    result["offset"] = offset
+    result["text"] = text[offset:stop]
+    result["truncated"] = stop < end
+    result["next_offset"] = stop if stop < end else None
     return result
 
 
@@ -627,7 +781,8 @@ def get_imap_tools() -> list[Tool]:
                 "By default returns metadata only – no binary data – to avoid "
                 "filling the context window. Set include_data=true only for small "
                 f"files (≤ {_transfer_cfg.attachment_max_size_kb} KB). "
-                "For larger files use transfer_to_paperless or transfer_to_hero." + _READ_ONLY_NOTE
+                "For larger files use transfer_to_paperless or transfer_to_hero. To READ "
+                "a document's content use get_attachment_text instead." + _READ_ONLY_NOTE
             ),
             inputSchema={
                 "type": "object",
@@ -656,6 +811,70 @@ def get_imap_tools() -> list[Tool]:
                             "Default: false."
                         ),
                         "default": False,
+                    },
+                },
+                "required": ["uid"],
+            },
+        ),
+        Tool(
+            name="get_attachment_text",
+            description=(
+                "Read the TEXT of a mail attachment without loading the file into the "
+                "context: the server extracts the text (PDF, Word .docx, Excel .xlsx, "
+                "PowerPoint .pptx, OpenDocument .odt/.ods/.odp, .txt/.csv/.html, "
+                "forwarded .eml) and returns one slice. Use it for large PDFs instead of "
+                "get_attachment(include_data=true). Three ways to read: (1) page by "
+                "page with offset/max_chars – when truncated=true call again with "
+                "offset=next_offset; (2) pages='3' or '2-5' for certain PDF pages, "
+                "slides or sheets; (3) query='Rechnungsbetrag Frist' returns only the "
+                "matching passages with their page. page_count and text_length tell "
+                "how big the document is. Scanned PDFs without text layer return "
+                "needs_ocr=true – then use transfer_to_paperless (OCR). Extracted "
+                "text is cached, so further pages are fast." + _READ_ONLY_NOTE
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "uid": {
+                        "type": "string",
+                        "description": "UID of the email",
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "Folder containing the email (default: INBOX)",
+                        "default": "INBOX",
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": (
+                            "Exact attachment filename. If omitted, the first attachment "
+                            "is used; the response lists all attachments."
+                        ),
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Character offset to start from (default: 0)",
+                        "default": 0,
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Maximum characters of text to return (default: 15000)",
+                        "default": 15000,
+                    },
+                    "pages": {
+                        "type": "string",
+                        "description": (
+                            "Only these pages/slides/sheets, e.g. '3', '2-5', '1,4-6'. "
+                            "Combine with offset/max_chars for long pages."
+                        ),
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Search words (case-insensitive, any word matches). Returns "
+                            "up to 20 passages of ±300 characters with page and offset "
+                            "instead of the running text."
+                        ),
                     },
                 },
                 "required": ["uid"],
@@ -1426,6 +1645,20 @@ async def handle_imap_tool(name: str, arguments: dict) -> list[TextContent]:
         for r in results:
             _preview_body(r)
         return [TextContent(type="text", text=str(results))]
+
+    elif name == "get_attachment_text":
+        result = await _attachment_text(
+            get_email_store() if _DB_ENABLED else None,
+            client,
+            folder=arguments.get("folder") or "INBOX",
+            uid=int(arguments["uid"]),
+            filename=arguments.get("filename"),
+            offset=int(arguments.get("offset") or 0),
+            max_chars=int(arguments.get("max_chars") or 15000),
+            pages=arguments.get("pages"),
+            query=arguments.get("query"),
+        )
+        return [TextContent(type="text", text=str(result))]
 
     elif name == "db_get_email":
         store = get_email_store()
