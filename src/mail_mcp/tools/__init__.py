@@ -409,7 +409,7 @@ def get_transfer_tools() -> list[Tool]:
                     "Paperless-ngx – no binary data passes through Claude's context. "
                     "Returns the Paperless task ID."
                 ),
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {
                         "folder": {
@@ -462,7 +462,7 @@ def get_transfer_tools() -> list[Tool]:
                     "Use this for attachments of any size; the 50 KB limit on "
                     "get_attachment(include_data=true) does NOT apply here."
                 ),
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {
                         "folder": {
@@ -499,7 +499,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="list_folders",
             description="List all email folders",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {},
             },
@@ -507,7 +507,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="create_folder",
             description="Create a new email folder",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder_name": {
@@ -521,7 +521,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="delete_folder",
             description="Delete an email folder",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder_name": {
@@ -535,7 +535,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="rename_folder",
             description="Rename an email folder",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "old_name": {
@@ -553,7 +553,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="search_emails",
             description="Search emails with criteria." + _READ_ONLY_NOTE,
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {
@@ -580,7 +580,7 @@ def get_imap_tools() -> list[Tool]:
                 "Get detailed email information from the live IMAP server. For long "
                 "mails prefer db_get_email (paged)." + _READ_ONLY_NOTE
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {
@@ -607,7 +607,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="mark_read",
             description="Mark email as read (seen)",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {
@@ -629,7 +629,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="mark_unread",
             description="Mark email as unread (remove seen flag)",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {
@@ -651,7 +651,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="mark_flagged",
             description="Mark email as flagged (starred)",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {
@@ -673,7 +673,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="unmark_flagged",
             description="Unmark email as flagged (remove starred)",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {
@@ -695,7 +695,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="move_email",
             description="Move email to another folder",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "source_folder": {
@@ -721,7 +721,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="copy_email",
             description="Copy email to another folder",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "source_folder": {
@@ -747,7 +747,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="delete_email",
             description="Delete email (mark as deleted and expunge)",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {
@@ -769,7 +769,7 @@ def get_imap_tools() -> list[Tool]:
         Tool(
             name="get_current_date",
             description="Get current date and time",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {},
             },
@@ -784,7 +784,7 @@ def get_imap_tools() -> list[Tool]:
                 "For larger files use transfer_to_paperless or transfer_to_hero. To READ "
                 "a document's content use get_attachment_text instead." + _READ_ONLY_NOTE
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {
@@ -832,7 +832,7 @@ def get_imap_tools() -> list[Tool]:
                 "needs_ocr=true – then use transfer_to_paperless (OCR). Extracted "
                 "text is cached, so further pages are fast." + _READ_ONLY_NOTE
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "uid": {
@@ -894,7 +894,7 @@ def get_smtp_tools() -> list[Tool]:
                 "or an https URL – the server fetches the binary directly so no "
                 "bytes pass through the LLM context." + _BODY_HINT
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "to": {
@@ -939,7 +939,7 @@ def get_smtp_tools() -> list[Tool]:
                 "from the original unless overridden. Identify the original by "
                 "original_uid (preferred) or reply_to_message_id." + _BODY_HINT
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "original_uid": {
@@ -988,7 +988,7 @@ def get_smtp_tools() -> list[Tool]:
                 "Identify the original by original_uid (preferred) or "
                 "original_message_id." + _BODY_HINT
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "to": {
@@ -1034,7 +1034,7 @@ def get_smtp_tools() -> list[Tool]:
                 "Send an existing draft by UID exactly as stored (after review), "
                 "file a copy in the Sent folder and delete the draft."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "uid": {"type": "integer", "description": "UID of the draft"},
@@ -1060,7 +1060,7 @@ def get_smtp_tools() -> list[Tool]:
                 "Drafts folder is auto-detected via SPECIAL-USE; override with "
                 "drafts_folder if your server doesn't advertise it." + _BODY_HINT
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "to": {
@@ -1103,7 +1103,7 @@ def get_smtp_tools() -> list[Tool]:
                 "a new draft and EXPUNGEs the old UID, so the returned UID is "
                 "different from the input."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "uid": {
@@ -1134,7 +1134,7 @@ def get_smtp_tools() -> list[Tool]:
                 "Idempotent: returns deleted=false / reason=draft_not_found if "
                 "the UID is no longer in the folder."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "uid": {"type": "integer"},
@@ -1156,7 +1156,7 @@ def get_smtp_tools() -> list[Tool]:
                 "the user's own address). The quote goes into the text AND "
                 "the HTML part." + _BODY_HINT
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "original_uid": {
@@ -1197,7 +1197,7 @@ def get_smtp_tools() -> list[Tool]:
                 "attachments are carried over – set forward_attachments=false "
                 "to drop them." + _BODY_HINT
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "original_uid": {"type": "integer"},
@@ -1253,7 +1253,7 @@ def get_db_tools() -> list[Tool]:
                 "body_length tell whether more exists – read the full text with "
                 "db_get_email. Requires EMAIL_DB_ENABLED=true." + _READ_ONLY_NOTE
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "query": {
@@ -1285,7 +1285,7 @@ def get_db_tools() -> list[Tool]:
                 "body_length – read a mail with db_get_email. "
                 "Requires EMAIL_DB_ENABLED=true." + _READ_ONLY_NOTE
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {
@@ -1320,7 +1320,7 @@ def get_db_tools() -> list[Tool]:
                 "again with offset=next_offset until truncated=false. "
                 "Requires EMAIL_DB_ENABLED=true." + _READ_ONLY_NOTE
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "uid": {
@@ -1353,7 +1353,7 @@ def get_db_tools() -> list[Tool]:
                 "per-folder breakdown, and last sync timestamps. "
                 "Requires EMAIL_DB_ENABLED=true."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {},
             },

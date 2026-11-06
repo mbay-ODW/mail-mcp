@@ -9,9 +9,16 @@ import asyncio
 import logging
 import os
 
-from mcp.server import Server
+import jsonschema
+from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+)
 
 from .tools import get_all_tools, handle_imap_tool, handle_smtp_tool
 
@@ -21,19 +28,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-# Create MCP Server
-app = Server("mail-mcp")
 
-
-@app.list_tools()
-async def list_tools():
+async def list_tools(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListToolsResult:
     """List all available tools."""
-    return get_all_tools()
+    return ListToolsResult(tools=get_all_tools())
 
 
-@app.call_tool()
-async def call_tool(name: str, arguments: dict) -> list:
-    """Handle tool calls."""
+async def _dispatch_tool(name: str, arguments: dict) -> list:
+    """Handle tool calls. Errors stay plain text without isError on purpose."""
     try:
         result = await handle_imap_tool(name, arguments)
         if result is not None:
@@ -44,6 +48,29 @@ async def call_tool(name: str, arguments: dict) -> list:
         raise ValueError(f"Unknown tool: {name}")
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+def _error_result(text: str) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
+
+
+async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
+    """mcp 2.x no longer validates arguments or wraps exceptions, so both happen here."""
+    arguments = params.arguments or {}
+    try:
+        tool = next((t for t in get_all_tools() if t.name == params.name), None)
+        if tool is not None:
+            try:
+                jsonschema.validate(arguments, tool.input_schema)
+            except jsonschema.ValidationError as e:
+                return _error_result(f"Input validation error: {e.message}")
+        return CallToolResult(content=await _dispatch_tool(params.name, arguments), is_error=False)
+    except Exception as e:
+        return _error_result(str(e))
+
+
+# Create MCP Server
+app = Server("mail-mcp", on_list_tools=list_tools, on_call_tool=call_tool)
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +221,8 @@ def _run_sse() -> None:
     session_manager = StreamableHTTPSessionManager(
         app=app,
         json_response=True,
+        # mcp 2.x limits bodies to 4 MiB; base64 attachments need more.
+        max_request_body_size=32 * 1024 * 1024,
     )
 
     async def handle_streamable_http(request: Request):

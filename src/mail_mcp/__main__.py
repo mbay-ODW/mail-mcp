@@ -19,31 +19,36 @@ import sys
 # 添加 src 到 path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mcp.server import Server
+import jsonschema
+from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+    Tool,
+)
 
 from .server import IMAPClient, IMAPConfig
 
-# 创建 MCP 服务器
-server = Server("mail-mcp-server")
 config = IMAPConfig.from_env()
 client = IMAPClient(config)
 
 
-@server.list_tools()
-async def list_tools():
+def _tools() -> list[Tool]:
     """列出所有可用工具"""
     return [
         Tool(
             name="list_folders",
             description="列出所有邮箱文件夹",
-            inputSchema={"type": "object", "properties": {}, "required": []},
+            input_schema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
             name="search_emails",
             description="搜索邮件。支持条件: unseen(未读), seen(已读), flagged(星标), from(发件人), subject(主题)",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX", "description": "邮箱文件夹"},
@@ -58,7 +63,7 @@ async def list_tools():
         Tool(
             name="mark_read",
             description="标记邮件为已读",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
@@ -70,7 +75,7 @@ async def list_tools():
         Tool(
             name="mark_unread",
             description="标记邮件为未读",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
@@ -82,7 +87,7 @@ async def list_tools():
         Tool(
             name="mark_flagged",
             description="添加星标",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
@@ -94,7 +99,7 @@ async def list_tools():
         Tool(
             name="unmark_flagged",
             description="移除星标",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
@@ -106,7 +111,7 @@ async def list_tools():
         Tool(
             name="move_email",
             description="移动邮件到其他文件夹",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
@@ -119,7 +124,7 @@ async def list_tools():
         Tool(
             name="delete_email",
             description="删除邮件（移到 Trash）",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
@@ -131,7 +136,7 @@ async def list_tools():
         Tool(
             name="get_email",
             description="获取邮件详情",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "folder": {"type": "string", "default": "INBOX"},
@@ -143,8 +148,13 @@ async def list_tools():
     ]
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict):
+async def list_tools(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListToolsResult:
+    return ListToolsResult(tools=_tools())
+
+
+async def _dispatch_tool(name: str, arguments: dict) -> list[TextContent]:
     """执行工具调用"""
     try:
         client.connect()
@@ -204,6 +214,26 @@ async def call_tool(name: str, arguments: dict):
 
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+def _error_result(text: str) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
+
+
+async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
+    """mcp 2.x no longer validates arguments, so that happens here."""
+    arguments = params.arguments or {}
+    tool = next((t for t in _tools() if t.name == params.name), None)
+    if tool is not None:
+        try:
+            jsonschema.validate(arguments, tool.input_schema)
+        except jsonschema.ValidationError as e:
+            return _error_result(f"Input validation error: {e.message}")
+    return CallToolResult(content=await _dispatch_tool(params.name, arguments), is_error=False)
+
+
+# 创建 MCP 服务器
+server = Server("mail-mcp-server", on_list_tools=list_tools, on_call_tool=call_tool)
 
 
 async def main():
